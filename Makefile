@@ -79,7 +79,7 @@ env:
 install:
 	@echo "Installing MariaDB Backup System..."
 	@chmod +x install.sh
-	@./install.sh
+	@./install.sh --allow-root
 
 # Container management
 start:
@@ -108,7 +108,7 @@ build:
 # Backup operations
 backup:
 	@echo "Creating incremental backup..."
-	@./backup.sh
+	@./backup.sh --incremental
 
 backup-full:
 	@echo "Creating full backup..."

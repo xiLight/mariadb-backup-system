@@ -2,7 +2,15 @@
 set -e
 
 # Load logging functions
-source "./lib/logging.sh"
+if [ -f "/usr/local/lib/logging.sh" ]; then
+    source "/usr/local/lib/logging.sh"
+else
+    # Fallback logging functions
+    log_info() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1"; }
+    log_success() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUCCESS] $1"; }
+    log_warning() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARNING] $1"; }
+    log_error() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1"; }
+fi
 
 # Use environment variables passed by docker-compose
 # These are already available as environment variables
@@ -166,6 +174,11 @@ else
   log_info "Available files in /etc/mysql/conf.d/:"
   ls -la /etc/mysql/conf.d/ || log_info "Directory does not exist"
 fi
+
+# Ensure binary log directory exists with proper permissions
+mkdir -p /var/lib/mysql/binlogs
+chown -R mysql:mysql /var/lib/mysql/binlogs
+chmod -R 750 /var/lib/mysql/binlogs
 
 # Start MariaDB with explicit bind-address to override any defaults
 exec mariadbd --user=mysql --datadir="$DATADIR" --bind-address=0.0.0.0

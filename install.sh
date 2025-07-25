@@ -189,14 +189,31 @@ start_services() {
     
     # Wait for MariaDB to be ready
     log_info "Waiting for MariaDB to be ready..."
-    for i in {1..30}; do
-        if docker exec mariadb mariadb --protocol=socket --socket=/run/mysqld/mysqld.sock -u root -e "SELECT 1;" &>/dev/null; then
+    
+    # First wait for container to be running
+    sleep 5
+    
+    # Get the root password from .env file
+    ROOT_PASSWORD=$(grep MARIADB_ROOT_PASSWORD .env | cut -d'=' -f2)
+    
+    for i in {1..60}; do
+        # Try multiple connection methods
+        if docker exec mariadb mariadb -u root -p"$ROOT_PASSWORD" -h 127.0.0.1 -P 3306 -e "SELECT 1;" &>/dev/null; then
+            log_success "MariaDB is ready!"
+            break
+        elif docker exec mariadb mariadb -u root -p"$ROOT_PASSWORD" --protocol=tcp --host=localhost --port=3306 -e "SELECT 1;" &>/dev/null; then
+            log_success "MariaDB is ready!"
+            break
+        elif docker exec mariadb mariadb -u root -p"$ROOT_PASSWORD" -e "SELECT 1;" &>/dev/null; then
             log_success "MariaDB is ready!"
             break
         fi
-        if [ $i -eq 30 ]; then
-            log_error "MariaDB failed to start within 30 seconds"
+        
+        if [ $i -eq 60 ]; then
+            log_error "MariaDB failed to start within 60 seconds"
             log_info "Check logs with: docker logs mariadb"
+            log_info "Trying to show recent container logs:"
+            docker logs --tail 20 mariadb
             exit 1
         fi
         sleep 1
@@ -227,7 +244,7 @@ show_completion_info() {
     echo "1. Review and customize your .env file"
     echo "2. Start using the backup system:"
     echo -e "   ${YELLOW}./backup.sh --full --include-empty${NC}  # Full backup"
-    echo -e "   ${YELLOW}./backup.sh${NC}                        # Incremental backup"
+    echo -e "   ${YELLOW}./backup.sh --incremental${NC}            # Incremental backup"
     echo
     echo -e "${BLUE}Useful Commands:${NC}"
     echo -e "   ${YELLOW}docker logs mariadb${NC}               # View MariaDB logs"

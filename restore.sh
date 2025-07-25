@@ -28,110 +28,87 @@ TOTAL_BINLOGS_SKIPPED=0
 TOTAL_BINLOGS_ERRORS=0
 PROCESSED_DATABASES=0
 
-# Function to create preview for fzf
-create_backup_preview() {
-  local backup_file="$1"
-  local db_name
-  local timestamp
-  local file_size
-  local file_date
-  
-  # Extract database name and timestamp from filename
-  db_name=$(basename "$backup_file" | sed 's/_full_.*//')
-  timestamp=$(basename "$backup_file" | sed 's/.*_full_\(.*\)\.sql\.gz\.enc/\1/')
-  
-  # Get file information
-  if [[ -f "$backup_file" ]]; then
-    file_size=$(stat -c%s "$backup_file" 2>/dev/null || stat -f%z "$backup_file" 2>/dev/null || echo "0")
-    file_date=$(stat -c%y "$backup_file" 2>/dev/null || stat -f%Sm "$backup_file" 2>/dev/null || echo "Unknown")
-    
-    # Convert size to human readable
-    if [[ $file_size -gt 1048576 ]]; then
-      size_hr=$(echo "scale=2; $file_size/1048576" | bc -l 2>/dev/null || echo "$((file_size/1048576))")
-      size_unit="MB"
-    elif [[ $file_size -gt 1024 ]]; then
-      size_hr=$(echo "scale=2; $file_size/1024" | bc -l 2>/dev/null || echo "$((file_size/1024))")
-      size_unit="KB"
-    else
-      size_hr=$file_size
-      size_unit="bytes"
+# Function to get all databases with at least one backup
+get_databases_with_backups() {
+  local dbs=()
+  log_info "Searching for backup files to identify databases..." >&2
+  for backup_file in $(find "./backups" -type f -name "*_full_*.sql.gz.enc" 2>/dev/null); do
+    db_name=$(basename "$backup_file" | sed 's/_full_.*//')
+    if [[ ! " ${dbs[*]} " =~ " ${db_name} " ]] && [[ "$db_name" != "binlogs" ]]; then
+      dbs+=("$db_name")
     fi
-    
-    echo "Database: $db_name"
-    echo "Timestamp: $timestamp"
-    echo "File size: $size_hr $size_unit"
-    echo "Created: $file_date"
-    echo "Path: $backup_file"
-  else
-    echo "File not found: $backup_file"
-  fi
+  done
+  echo "${dbs[@]}"
 }
 
 # Function to select database interactively
 select_database_interactive() {
-  local databases=()
-  
-  # Find all databases that have backups
-  while IFS= read -r -d '' backup_file; do
-    local db_name
-    db_name=$(basename "$backup_file" | sed 's/_full_.*//')
-    if [[ ! " ${databases[@]} " =~ " ${db_name} " ]]; then
-      databases+=("$db_name")
-    fi
-  done < <(find "./backups" -name "*_full_*.sql.gz.enc" -print0 2>/dev/null)
-  
-  if [[ ${#databases[@]} -eq 0 ]]; then
-    log_error "No backup files found"
+  local DBS=("$@")
+  if [[ ${#DBS[@]} -eq 0 ]]; then
+    log_error "No databases with backup files found." >&2
     exit 1
   fi
   
-  log_info "Available databases:"
-  for i in "${!databases[@]}"; do
-    echo "  $((i+1)). ${databases[$i]}"
+  echo "" >&2
+  echo "Available databases for restore:" >&2
+  echo "================================" >&2
+  
+  echo "  [1] ALL_DATABASES (restore all databases)" >&2
+  for i in "${!DBS[@]}"; do
+    local db_name="${DBS[$i]}"
+    echo "  [$((i+2))] $db_name" >&2
   done
   
-  while true; do
-    read -p "Select database (1-${#databases[@]}): " choice
-    if [[ "$choice" =~ ^[0-9]+$ ]] && [[ $choice -ge 1 ]] && [[ $choice -le ${#databases[@]} ]]; then
-      echo "${databases[$((choice-1))]}"
-      return
+  echo "" >&2
+  read -p "Select an option (1-$((1+${#DBS[@]}))): " selection
+  
+  if [[ "$selection" =~ ^[0-9]+$ ]] && [[ "$selection" -ge 1 ]] && [[ "$selection" -le $((1+${#DBS[@]})) ]]; then
+    if [[ "$selection" -eq 1 ]]; then
+      echo "ALL_DATABASES"
     else
-      log_error "Invalid selection. Please enter a number between 1 and ${#databases[@]}"
+      local selected_index=$((selection - 2))
+      echo "${DBS[$selected_index]}"
     fi
-  done
+  else
+    log_error "Invalid selection: $selection" >&2
+    exit 1
+  fi
 }
 
 # Function to select backup interactively
 select_backup_interactive() {
-  local database="$1"
-  local backups=()
+  local DB=$1
+  shift
+  local FULLS=("$@")
   
-  # Find all backups for this database, sorted by date (newest first)
-  while IFS= read -r backup_file; do
-    backups+=("$backup_file")
-  done < <(ls -1t "./backups/${database}_full_"*.sql.gz.enc 2>/dev/null)
-  
-  if [[ ${#backups[@]} -eq 0 ]]; then
-    log_error "No backups found for database: $database"
+  if [[ ${#FULLS[@]} -eq 0 ]]; then
+    log_error "No valid backups found for database $DB" >&2
     exit 1
   fi
   
-  log_info "Available backups for $database:"
-  for i in "${!backups[@]}"; do
-    local timestamp
-    timestamp=$(basename "${backups[$i]}" | sed "s/${database}_full_\(.*\)\.sql\.gz\.enc/\1/")
-    echo "  $((i+1)). $timestamp"
+  echo "" >&2
+  echo "Available backups for database '$DB':" >&2
+  echo "======================================" >&2
+  
+  for i in "${!FULLS[@]}"; do
+    local backup_file="${FULLS[$i]}"
+    local backup_size=$(stat -c%s "$backup_file" 2>/dev/null || stat -f%z "$backup_file" 2>/dev/null || echo "unknown")
+    local backup_date=$(stat -c%y "$backup_file" 2>/dev/null || stat -f%Sm "$backup_file" 2>/dev/null || echo "unknown")
+    local backup_timestamp=$(basename "$backup_file" | sed -E "s/^${DB}_full_(.*)\.sql\.gz\.enc$/\1/")
+    local formatted_timestamp=$(echo "$backup_timestamp" | sed 's/_/ /g' | sed 's/-/:/g')
+    echo "  [$((i+1))] $formatted_timestamp (${backup_size} bytes, $backup_date)" >&2
   done
   
-  while true; do
-    read -p "Select backup (1-${#backups[@]}): " choice
-    if [[ "$choice" =~ ^[0-9]+$ ]] && [[ $choice -ge 1 ]] && [[ $choice -le ${#backups[@]} ]]; then
-      echo "${backups[$((choice-1))]}"
-      return
-    else
-      log_error "Invalid selection. Please enter a number between 1 and ${#backups[@]}"
-    fi
-  done
+  echo "" >&2
+  read -p "Select backup number (1-${#FULLS[@]}): " selection
+  
+  if [[ "$selection" =~ ^[0-9]+$ ]] && [[ "$selection" -ge 1 ]] && [[ "$selection" -le ${#FULLS[@]} ]]; then
+    local selected_index=$((selection - 1))
+    echo "${FULLS[$selected_index]}"
+  else
+    log_error "Invalid selection: $selection" >&2
+    exit 1
+  fi
 }
 
 # Robust argument parsing for all relevanten Flags
@@ -215,8 +192,19 @@ fi
 # Interactive selection if no parameters provided
 if [[ "$INTERACTIVE_SELECT" == "true" ]]; then
   log_info "Interactive mode - select database and backup"
-  DATABASE=$(select_database_interactive)
-  BACKUP_FILE=$(select_backup_interactive "$DATABASE")
+  
+  DBS_WITH_BACKUPS=( $(get_databases_with_backups) )
+  SELECTED_DB=$(select_database_interactive "${DBS_WITH_BACKUPS[@]}")
+  
+  if [[ "$SELECTED_DB" == "ALL_DATABASES" ]]; then
+    log_info "Selected: ALL_DATABASES. Restoring all databases from their latest backup."
+    DATABASE="ALL" # Special value to indicate all databases
+    BACKUP_FILE="LATEST" # Special value
+  else
+    DATABASE="$SELECTED_DB"
+    BACKUP_FILES=( $(ls -1t ./backups/${DATABASE}_full_*.sql.gz.enc 2>/dev/null) )
+    BACKUP_FILE=$(select_backup_interactive "$DATABASE" "${BACKUP_FILES[@]}")
+  fi
 fi
 
 # Auto-select last backup if requested
@@ -233,100 +221,132 @@ if [[ "$USE_LAST_BACKUP" == "true" ]]; then
   fi
 fi
 
-# Validate parameters
-if [[ -z "$DATABASE" ]]; then
-  log_error "Database not specified"
-  exit 1
+# Handle restore for all databases
+if [[ "$DATABASE" == "ALL" ]]; then
+  DBS_TO_RESTORE=( $(get_databases_with_backups) )
+  log_info "Starting restore for all databases: ${DBS_TO_RESTORE[*]}"
+else
+  DBS_TO_RESTORE=("$DATABASE")
 fi
 
-if [[ -z "$BACKUP_FILE" ]]; then
-  log_error "Backup file not specified"
-  exit 1
-fi
-
-if [[ ! -f "$BACKUP_FILE" ]]; then
-  log_error "Backup file not found: $BACKUP_FILE"
-  exit 1
-fi
-
-log_info "Selected database: $DATABASE"
-log_info "Selected backup: $BACKUP_FILE"
-log_both "INFO" "Selected database: $DATABASE, backup: $BACKUP_FILE" "$LOG_FILE"
-
-# Extract timestamp from backup filename
-BACKUP_TIMESTAMP=$(basename "$BACKUP_FILE" | sed "s/${DATABASE}_full_\(.*\)\.sql\.gz\.enc/\1/")
-log_info "Backup timestamp: $BACKUP_TIMESTAMP"
-
-# Get backup file size for statistics
-BACKUP_SIZE=$(stat -c%s "$BACKUP_FILE" 2>/dev/null || stat -f%z "$BACKUP_FILE" 2>/dev/null || echo "0")
-TOTAL_BACKUP_SIZE=$BACKUP_SIZE
-
-log_info "Starting restore process..."
-log_both "INFO" "Starting restore process for $DATABASE from $BACKUP_TIMESTAMP" "$LOG_FILE"
-
-# Step 1: Decrypt and restore the full backup
-log_info "Step 1: Decrypting and restoring full backup..."
-
-# Check if encryption key exists
-if [[ ! -f ".backup_encryption_key" ]]; then
-  log_error "Encryption key not found: .backup_encryption_key"
-  exit 1
-fi
-
-# Decrypt and restore the backup
-if ! ./encrypt_backup.sh --decrypt "$BACKUP_FILE" --key .backup_encryption_key; then
-  log_error "Failed to decrypt backup file"
-  exit 1
-fi
-
-# Get decrypted filename
-DECRYPTED_FILE="${BACKUP_FILE%.enc}"
-
-# Import the backup
-log_info "Importing backup into database: $DATABASE"
-if ! docker exec -i mariadb mariadb -u root -p"$MARIADB_ROOT_PASSWORD" "$DATABASE" < <(gunzip -c "$DECRYPTED_FILE"); then
-  log_error "Failed to import backup"
-  rm -f "$DECRYPTED_FILE"
-  exit 1
-fi
-
-log_success "Full backup restored successfully"
-PROCESSED_DATABASES=1
-
-# Clean up decrypted file
-rm -f "$DECRYPTED_FILE"
-
-# Step 2: Apply binary logs if timestamp is specified
-if [[ -n "$RESTORE_TO_TIMESTAMP" ]]; then
-  log_info "Step 2: Applying binary logs up to timestamp: $RESTORE_TO_TIMESTAMP"
+for DB_TO_RESTORE in "${DBS_TO_RESTORE[@]}"; do
+  # If restoring all, get the latest backup for each DB
+  if [[ "$DATABASE" == "ALL" ]]; then
+    CURRENT_BACKUP_FILE=$(ls -1t "./backups/${DB_TO_RESTORE}_full_"*.sql.gz.enc 2>/dev/null | head -1)
+    if [[ -z "$CURRENT_BACKUP_FILE" ]]; then
+      log_warning "No backup found for $DB_TO_RESTORE. Skipping."
+      continue
+    fi
+  else
+    CURRENT_BACKUP_FILE="$BACKUP_FILE"
+  fi
   
-  # Find binlog info file
-  BINLOG_INFO_FILE="./backups/binlog_info/last_binlog_info_${DATABASE}_${BACKUP_TIMESTAMP}.txt"
+  # Validate parameters for the current database
+  if [[ -z "$DB_TO_RESTORE" ]]; then
+    log_error "Database not specified"
+    continue
+  fi
+
+  if [[ -z "$CURRENT_BACKUP_FILE" ]]; then
+    log_error "Backup file not specified for $DB_TO_RESTORE"
+    continue
+  fi
+
+  if [[ ! -f "$CURRENT_BACKUP_FILE" ]]; then
+    log_error "Backup file not found: $CURRENT_BACKUP_FILE"
+    continue
+  fi
+
+  log_info "--- Processing database: $DB_TO_RESTORE ---"
+  log_info "Selected backup: $CURRENT_BACKUP_FILE"
+  log_both "INFO" "Selected database: $DB_TO_RESTORE, backup: $CURRENT_BACKUP_FILE" "$LOG_FILE"
+
+  # Extract timestamp from backup filename
+  BACKUP_TIMESTAMP=$(basename "$CURRENT_BACKUP_FILE" | sed "s/${DB_TO_RESTORE}_full_\(.*\)\.sql\.gz\.enc/\1/")
+  log_info "Backup timestamp: $BACKUP_TIMESTAMP"
+
+  # Get backup file size for statistics
+  BACKUP_SIZE=$(stat -c%s "$CURRENT_BACKUP_FILE" 2>/dev/null || stat -f%z "$CURRENT_BACKUP_FILE" 2>/dev/null || echo "0")
+  TOTAL_BACKUP_SIZE=$((TOTAL_BACKUP_SIZE + BACKUP_SIZE))
+
+  log_info "Starting restore process..."
+  log_both "INFO" "Starting restore process for $DB_TO_RESTORE from $BACKUP_TIMESTAMP" "$LOG_FILE"
+
+  # Step 1: Decrypt and restore the full backup
+  log_info "Step 1: Decrypting and restoring full backup..."
+
+  # Check if encryption key exists
+  if [[ ! -f ".backup_encryption_key" ]]; then
+    log_error "Encryption key not found: .backup_encryption_key"
+    exit 1
+  fi
+
+  # Decrypt and restore the backup
+  if ! ./encrypt_backup.sh --decrypt "$CURRENT_BACKUP_FILE" --key .backup_encryption_key; then
+    log_error "Failed to decrypt backup file"
+    continue
+  fi
+
+  # Get decrypted filename
+  DECRYPTED_FILE="${CURRENT_BACKUP_FILE%.enc}"
+
+  # Import the backup
+  log_info "Importing backup into database: $DB_TO_RESTORE"
+
+  # Determine the best connection method for MariaDB
+  if docker exec mariadb mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -e "SELECT 1;" &>/dev/null; then
+    MYSQL_CONNECTION_ARGS=(-u root -p"$MARIADB_ROOT_PASSWORD")
+  elif docker exec mariadb mariadb -u root -e "SELECT 1;" &>/dev/null; then
+    MYSQL_CONNECTION_ARGS=(-u root)
+  else
+    log_error "Cannot connect to MariaDB container"
+    exit 1
+  fi
+
+  # Create database if it doesn't exist
+  docker exec mariadb mariadb "${MYSQL_CONNECTION_ARGS[@]}" -e "CREATE DATABASE IF NOT EXISTS \`$DB_TO_RESTORE\`;"
+
+  # Import the backup using the working connection method
+  if ! docker exec -i mariadb mariadb "${MYSQL_CONNECTION_ARGS[@]}" "$DB_TO_RESTORE" < <(gunzip -c "$DECRYPTED_FILE"); then
+    log_error "Failed to import backup for $DB_TO_RESTORE"
+    rm -f "$DECRYPTED_FILE"
+    continue
+  fi
+
+  log_success "Full backup for $DB_TO_RESTORE restored successfully"
+  PROCESSED_DATABASES=$((PROCESSED_DATABASES + 1))
+
+  # Clean up decrypted file
+  rm -f "$DECRYPTED_FILE"
+
+  # Step 2: Apply binary logs
+  log_info "Step 2: Applying binary logs..."
+  
+  # Find binlog info file associated with the full backup
+  BINLOG_INFO_FILE="./backups/binlog_info/last_binlog_info_${DB_TO_RESTORE}_${BACKUP_TIMESTAMP}.txt"
   if [[ ! -f "$BINLOG_INFO_FILE" ]]; then
-    BINLOG_INFO_FILE="./backups/incr/last_binlog_info_${DATABASE}_${BACKUP_TIMESTAMP}.txt"
+    # Fallback for older backup scripts that might store it in 'incr'
+    BINLOG_INFO_FILE="./backups/incr/last_binlog_info_${DB_TO_RESTORE}_${BACKUP_TIMESTAMP}.txt"
   fi
   
   if [[ -f "$BINLOG_INFO_FILE" ]]; then
     read BINLOG_FILE BINLOG_POS < "$BINLOG_INFO_FILE"
     log_info "Starting from binlog: $BINLOG_FILE at position $BINLOG_POS"
-    log_both "INFO" "Applying binlogs from $BINLOG_FILE:$BINLOG_POS to $RESTORE_TO_TIMESTAMP" "$LOG_FILE"
+    log_both "INFO" "Applying binlogs from $BINLOG_FILE:$BINLOG_POS" "$LOG_FILE"
     
-    # Find all binlog files from the backup point to the restore timestamp
+    # Find all binlog files from the backup point onwards
     BINLOG_FILES=()
-    for bl_file in ./backups/binlogs/mysql-bin.*; do
+    # Ensure we only process actual binlog files, not the index
+    for bl_file in $(find ./backups/binlogs -name "mysql-bin.*" -not -name "*.index" -not -name "*.idx" | sort); do
       if [[ -f "$bl_file" ]]; then
         bl_name=$(basename "$bl_file")
-        if [[ "$bl_name" >= "$BINLOG_FILE" ]]; then
+        if [[ "$bl_name" > "$BINLOG_FILE" || ( "$bl_name" == "$BINLOG_FILE" ) ]]; then
           BINLOG_FILES+=("$bl_file")
         fi
       fi
     done
     
-    # Sort binlog files
-    IFS=$'\n' BINLOG_FILES=($(sort <<<"${BINLOG_FILES[*]}"))
-    unset IFS
-    
-    log_info "Found ${#BINLOG_FILES[@]} binlog files to process"
+    log_info "Found ${#BINLOG_FILES[@]} binlog files to process."
     
     # Process each binlog file
     for bl_file in "${BINLOG_FILES[@]}"; do
@@ -339,32 +359,50 @@ if [[ -n "$RESTORE_TO_TIMESTAMP" ]]; then
         TOTAL_BINLOG_SIZE=$((TOTAL_BINLOG_SIZE + BL_SIZE))
       fi
       
-      # Determine start position (only for first file)
-      START_POS=""
+      # Set start and stop options for mysqlbinlog
+      MYSQLBINLOG_OPTIONS=""
       if [[ "$bl_name" == "$BINLOG_FILE" ]]; then
-        START_POS="--start-position=$BINLOG_POS"
+        MYSQLBINLOG_OPTIONS+=" --start-position=$BINLOG_POS"
+      fi
+      if [[ -n "$RESTORE_TO_TIMESTAMP" ]]; then
+        MYSQLBINLOG_OPTIONS+=" --stop-datetime=\"$RESTORE_TO_TIMESTAMP\""
       fi
       
-      # Apply binlog with timestamp limit
-      if docker exec mariadb mysqlbinlog \
-        $START_POS \
-        --stop-datetime="$RESTORE_TO_TIMESTAMP" \
-        --database="$DATABASE" \
-        "/var/lib/mysql/binlogs/$bl_name" | \
-        docker exec -i mariadb mariadb -u root -p"$MARIADB_ROOT_PASSWORD" "$DATABASE"; then
+      # Copy binlog file to container for processing
+      docker exec mariadb mkdir -p /tmp/binlogs 2>/dev/null
+      docker cp "$bl_file" "mariadb:/tmp/binlogs/$bl_name"
+      
+      # Apply binlog using the correct mariadb-binlog path
+      if [[ -n "$RESTORE_TO_TIMESTAMP" ]]; then
+        eval "docker exec mariadb /usr/bin/mariadb-binlog \
+          $MYSQLBINLOG_OPTIONS \
+          --database=\"$DB_TO_RESTORE\" \
+          \"/tmp/binlogs/$bl_name\"" | \
+          docker exec -i mariadb mariadb "${MYSQL_CONNECTION_ARGS[@]}" "$DB_TO_RESTORE"
+      else
+        docker exec mariadb /usr/bin/mariadb-binlog \
+          $MYSQLBINLOG_OPTIONS \
+          --database="$DB_TO_RESTORE" \
+          "/tmp/binlogs/$bl_name" | \
+          docker exec -i mariadb mariadb "${MYSQL_CONNECTION_ARGS[@]}" "$DB_TO_RESTORE"
+      fi
+      
+      # Clean up temporary binlog file
+      docker exec mariadb rm -f "/tmp/binlogs/$bl_name"
         
+      if [[ $? -eq 0 ]]; then
         log_success "Applied binlog: $bl_name"
         TOTAL_BINLOGS_PROCESSED=$((TOTAL_BINLOGS_PROCESSED + 1))
       else
-        log_warning "Failed to apply binlog: $bl_name (this might be normal if no relevant data)"
+        log_warning "Failed to apply binlog: $bl_name (this might be normal if no relevant data or if changes were already applied)"
         TOTAL_BINLOGS_ERRORS=$((TOTAL_BINLOGS_ERRORS + 1))
       fi
     done
   else
     log_warning "Binlog info file not found: $BINLOG_INFO_FILE"
-    log_warning "Cannot apply incremental changes"
+    log_warning "Cannot apply incremental changes for $DB_TO_RESTORE. Only the full backup was restored."
   fi
-fi
+done
 
 # Calculate restore duration
 RESTORE_END_TIME=$(date +%s)
@@ -399,9 +437,11 @@ log_both "SUCCESS" "Restore completed successfully!" "$LOG_FILE"
 
 echo
 log_info "=== RESTORE SUMMARY ==="
-log_info "Database: $DATABASE"
-log_info "Backup file: $BACKUP_FILE"
-log_info "Backup timestamp: $BACKUP_TIMESTAMP"
+if [[ "$DATABASE" == "ALL" ]]; then
+  log_info "Databases: All (${#DBS_TO_RESTORE[@]} databases)"
+else
+  log_info "Database: $DATABASE"
+fi
 if [[ -n "$RESTORE_TO_TIMESTAMP" ]]; then
   log_info "Restored to timestamp: $RESTORE_TO_TIMESTAMP"
 fi
@@ -422,3 +462,7 @@ log_both "INFO" "Backup size: $BACKUP_SIZE_HR $BACKUP_SIZE_UNIT, Binlog size: $B
 log_both "INFO" "Binlogs processed: $TOTAL_BINLOGS_PROCESSED, Errors: $TOTAL_BINLOGS_ERRORS" "$LOG_FILE"
 
 log_info "Restore process completed at $(date '+%Y-%m-%d %H:%M:%S')"
+
+BINLOG_BACKUP_DIR="./backups/binlogs"
+BINLOG_INFO_DIR="./backups/binlog_info"
+

@@ -249,6 +249,16 @@ main() {
     check_recent_backups || OVERALL_STATUS=1
     run_backup_test "$1" || OVERALL_STATUS=1
     
+    # Add a section to check binary logging status
+    echo "Checking binary logging status:"
+    docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -e "SHOW VARIABLES LIKE 'log_bin%';"
+    docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -e "SHOW VARIABLES LIKE 'binlog%';"
+    docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -e "SHOW BINARY LOGS;"
+    
+    # Check binary log directory permissions
+    echo "Checking binary log directory permissions:"
+    docker exec "$MARIADB_CONTAINER" ls -la /var/lib/mysql/binlogs
+    
     show_summary
     
     exit $OVERALL_STATUS
