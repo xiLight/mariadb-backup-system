@@ -1,0 +1,46 @@
+services:
+  mariadb:
+    build:
+      context: .
+      dockerfile: Dockerfile.mariadb
+    container_name: ${MARIADB_CONTAINER:-mariadb}
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE1: ${MARIADB_DATABASE1}
+      MARIADB_DATABASE2: ${MARIADB_DATABASE2}
+      MARIADB_DATABASE3: ${MARIADB_DATABASE3}
+      MARIADB_DATABASE4: ${MARIADB_DATABASE4}
+      MARIADB_DATABASE5: ${MARIADB_DATABASE5}
+      MARIADB_USER: ${MARIADB_USER}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+      DATABASE1_PASSWORD: ${DATABASE1_PASSWORD}
+      DATABASE2_PASSWORD: ${DATABASE2_PASSWORD}
+      DATABASE3_PASSWORD: ${DATABASE3_PASSWORD}
+      DATABASE4_PASSWORD: ${DATABASE4_PASSWORD}
+      DATABASE5_PASSWORD: ${DATABASE5_PASSWORD}
+      TZ: ${TZ:-Europe/Berlin}
+    volumes:
+      - ./mariadb_data:/var/lib/mysql
+      - ./backups/binlogs:/var/lib/mysql/binlogs
+      - ./my_custom.cnf:/etc/mysql/conf.d/my_custom.cnf:ro
+      - ./entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
+    ports:
+      - "3306:3306"
+    networks:
+      - web
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Create necessary directories during docker-compose up
+volumes:
+  mariadb_data:
+
+networks:
+  web:
+    external: true
+

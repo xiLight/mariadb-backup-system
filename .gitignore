@@ -1,0 +1,61 @@
+# Environment files
+.env
+.env.local
+.env.backup
+
+# Encryption keys
+.backup_encryption_key
+*.key
+
+# Data directories
+mariadb_data/
+backups/
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker files
+.docker/
+
+# Log files
+*.log
+
+# Backup files
+*.sql
+*.sql.gz
+*.sql.gz.enc
+*.enc
+
+# Test files
+test_*.sql
+test_output/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Archive files
+*.zip
+*.tar.gz
+*.rar
+
+# Local development
+local/
+dev/
+development/

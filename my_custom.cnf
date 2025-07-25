@@ -1,0 +1,69 @@
+[mysqld]
+# Network and connections
+bind-address = 0.0.0.0
+max_connections = 900
+max_connect_errors = 1000
+connect_timeout = 10
+wait_timeout = 600
+interactive_timeout = 600
+max_allowed_packet = 64M
+thread_cache_size = 128
+
+# InnoDB settings
+innodb_buffer_pool_size = 1028M
+innodb_buffer_pool_instances = 4
+innodb_log_file_size = 128M
+innodb_log_buffer_size = 64M
+innodb_flush_log_at_trx_commit = 2
+innodb_flush_method = O_DIRECT
+innodb_file_per_table = 1
+innodb_read_io_threads = 4
+innodb_write_io_threads = 4
+innodb_io_capacity = 400
+
+# Query cache
+query_cache_size = 64M
+query_cache_limit = 2M
+query_cache_type = 1
+
+# Binlog settings
+server-id = 1
+binlog_format = ROW
+expire_logs_days = 30
+max_binlog_size = 100M
+log_bin = /var/lib/mysql/binlogs/mysql-bin
+sync_binlog = 0  # For better performance (less safe, but we have backups)
+
+# GTID settings for better replication and backup consistency
+gtid_strict_mode = OFF  # Allow both GTID and non-GTID transactions for compatibility
+gtid_domain_id = 1
+log_slave_updates = ON
+
+# Additional binlog settings for restore compatibility
+binlog_do_db = ""  # Log all databases
+binlog_ignore_db = ""  # Don't ignore any databases
+sql_mode = ""  # Relaxed SQL mode for better compatibility
+
+# Performance
+join_buffer_size = 4M
+sort_buffer_size = 4M
+read_buffer_size = 2M
+read_rnd_buffer_size = 4M
+key_buffer_size = 64M
+table_open_cache = 2000
+table_definition_cache = 1400
+open_files_limit = 65535
+
+# Tmp tables
+tmp_table_size = 64M
+max_heap_table_size = 64M
+
+# Logging
+log_error = /var/lib/mysql/error.log
+slow_query_log = 1
+slow_query_log_file = /var/lib/mysql/slow_query.log
+long_query_time = 2
+
+# Character set
+character_set_server = utf8mb4
+collation_server = utf8mb4_general_ci

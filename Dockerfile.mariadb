@@ -1,0 +1,66 @@
+# Stage 1: Build stage
+FROM debian:bullseye-slim AS builder
+
+ENV MARIADB_VERSION=11.3
+
+# Install MariaDB
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    gnupg \
+    lsb-release && \
+    curl -LsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    mariadb-server \
+    mariadb-client \
+    gettext-base && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Identify the locations of key files for debugging
+RUN find /usr -name "mysqld" && \
+    find /usr -name "mariadb*" | grep bin/ && \
+    find /usr -name "mysql*" | grep bin/
+
+# Stage 2: Final stage - simplified approach
+FROM debian:bullseye-slim
+
+# Install MariaDB directly in the final stage for simplicity
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    gnupg \
+    lsb-release \
+    gosu \
+    psmisc && \
+    curl -LsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    mariadb-server \
+    mariadb-client \
+    gettext-base && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create necessary directories
+RUN mkdir -p /var/lib/mysql /var/run/mysqld /etc/mysql/conf.d /tmp/binlogs && \
+    chown -R mysql:mysql /var/lib/mysql /var/run/mysqld /tmp/binlogs && \
+    chmod 777 /var/run/mysqld
+
+# Copy MariaDB configuration
+COPY my_custom.cnf /etc/mysql/conf.d/
+
+# Copy and prepare entrypoint script
+COPY entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+EXPOSE 3306
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD mysqladmin ping -h localhost || exit 1
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD []
