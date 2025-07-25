@@ -53,6 +53,9 @@ RUN mkdir -p /var/lib/mysql /var/run/mysqld /etc/mysql/conf.d /tmp/binlogs && \
 # Copy MariaDB configuration
 COPY my_custom.cnf /etc/mysql/conf.d/
 
+# Copy logging configuration
+COPY lib/logging.sh /usr/local/lib/
+
 # Copy and prepare entrypoint script
 COPY entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh
