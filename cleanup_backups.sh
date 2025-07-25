@@ -3,12 +3,8 @@ cd "$(dirname "$0")"
 
 set -e
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Load logging functions
+source "./lib/logging.sh"
 
 # Version
 CLEANUP_VERSION="1.0.0"
@@ -27,27 +23,6 @@ LOG_FILE="./logs/cleanup_backups.log"
 
 # Create logs directory if it doesn't exist
 mkdir -p "./logs"
-
-# Logging functions with timestamps
-log_info() {
-  local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-  echo -e "${BLUE}[$timestamp] [INFO] $1${NC}" | tee -a "$LOG_FILE"
-}
-
-log_success() {
-  local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-  echo -e "${GREEN}[$timestamp] [SUCCESS] $1${NC}" | tee -a "$LOG_FILE"
-}
-
-log_warning() {
-  local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-  echo -e "${YELLOW}[$timestamp] [WARNING] $1${NC}" | tee -a "$LOG_FILE"
-}
-
-log_error() {
-  local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-  echo -e "${RED}[$timestamp] [ERROR] $1${NC}" | tee -a "$LOG_FILE"
-}
 
 # Function to get all databases from MariaDB server
 get_all_databases() {
@@ -76,15 +51,18 @@ if [[ -n "$DB_LIST" ]]; then
     fi
   done <<< "$DB_LIST"
   log_info "Automatically detected databases with backups: ${DBS[*]}"
+  log_both "INFO" "Automatically detected databases with backups: ${DBS[*]}" "$LOG_FILE"
 else
   # Fallback to existing backup files
   log_warning "Could not detect databases from server, using existing backup files"
+  log_both "WARNING" "Could not detect databases from server, using existing backup files" "$LOG_FILE"
   # Find all databases from encrypted backups
 DBS=($(ls $BACKUP_DIR/*_full_*.sql.gz.enc 2>/dev/null | sed -r 's/.*\/(.*)_full_.*/\1/' | sort | uniq))
 fi
 
 for DB in "${DBS[@]}"; do
   log_info "Cleaning up old backups for $DB (keeping last $KEEP_GENERATIONS generations)..."
+  log_both "INFO" "Cleaning up old backups for $DB (keeping last $KEEP_GENERATIONS generations)..." "$LOG_FILE"
   # Find all full backups, sorted by time (oldest first)
   FULLS=( $(ls -1 $BACKUP_DIR/${DB}_full_*.sql.gz.enc 2>/dev/null | sort) )
   N_FULLS=${#FULLS[@]}
@@ -94,11 +72,13 @@ for DB in "${DBS[@]}"; do
       # Timestamp extraction:
       TS=$(basename "$OLD_FULL" | sed "s/${DB}_full_\(.*\)\.sql\.gz\.enc/\1/")
       log_info "  - Deleting $OLD_FULL"
+      log_both "INFO" "  - Deleting $OLD_FULL" "$LOG_FILE"
       rm -f "$OLD_FULL"
       # Also remove binlog info and checksum
       INFO_TXT="$BINLOG_INFO_DIR/last_binlog_info_${DB}_${TS}.txt"
       if [[ -f "$INFO_TXT" ]]; then
         log_info "Deleting binlog info: $INFO_TXT"
+        log_both "INFO" "Deleting binlog info: $INFO_TXT" "$LOG_FILE"
         rm -f "$INFO_TXT"
       fi
 
@@ -106,6 +86,7 @@ for DB in "${DBS[@]}"; do
       for INCR_TXT in $INCR_INFO_DIR/last_binlog_info_${DB}_${TS}_incr.txt; do
         if [[ -f "$INCR_TXT" ]]; then
           log_info "  - Deleting $INCR_TXT"
+          log_both "INFO" "  - Deleting $INCR_TXT" "$LOG_FILE"
           rm -f "$INCR_TXT"
         fi
       done
@@ -113,12 +94,15 @@ for DB in "${DBS[@]}"; do
       for INCR_SQL in $BACKUP_DIR/incremental_${DB}_${TS}_*.sql; do
         if [[ -f "$INCR_SQL" ]]; then
           log_info "  - Deleting $INCR_SQL"
+          log_both "INFO" "  - Deleting $INCR_SQL" "$LOG_FILE"
           rm -f "$INCR_SQL"
         fi
       done
     done
   fi
   log_success "Cleanup for $DB completed."
+  log_both "SUCCESS" "Cleanup for $DB completed." "$LOG_FILE"
 done
 
 log_success "Cleanup completed."
+log_both "SUCCESS" "Cleanup completed." "$LOG_FILE"

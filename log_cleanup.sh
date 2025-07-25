@@ -1,33 +1,8 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-# Function to log with timestamp
-log_info() {
-  local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-  echo -e "${BLUE}[$timestamp] [INFO] $1${NC}"
-}
-
-log_success() {
-  local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-  echo -e "${GREEN}[$timestamp] [SUCCESS] $1${NC}"
-}
-
-log_warning() {
-  local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-  echo -e "${YELLOW}[$timestamp] [WARNING] $1${NC}"
-}
-
-log_error() {
-  local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-  echo -e "${RED}[$timestamp] [ERROR] $1${NC}"
-}
+# Load logging functions
+source "./lib/logging.sh"
 
 log_info "Starting log cleanup process..."
 
