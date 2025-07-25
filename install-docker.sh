@@ -6,13 +6,8 @@
 
 set -e
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-NC='\033[0m' # No Color
+# Load logging functions
+source "./lib/logging.sh"
 
 # Script information
 SCRIPT_VERSION="1.0.0"
@@ -22,15 +17,10 @@ ALLOW_ROOT=false
 
 # Banner
 show_banner() {
-    echo -e "${PURPLE}"
-    echo "╔══════════════════════════════════════════════════════════════════════════════╗"
-    echo "║                          Docker Installation Script                         ║"
-    echo "║                                                                              ║"
-    echo "║  Automatically installs Docker Engine and Docker Compose                   ║"
-    echo "║  Supports: Ubuntu, Debian, CentOS, RHEL, Fedora, Arch Linux               ║"
-    echo "║                                                                              ║"
-    echo "╚══════════════════════════════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
+    echo -e "${BLUE}╔══════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║          Docker & Docker Compose Installation Script            ║${NC}"
+    echo -e "${BLUE}║                        Version $SCRIPT_VERSION                           ║${NC}"
+    echo -e "${BLUE}╚══════════════════════════════════════════════════════════════════╝${NC}"
     echo
 }
 
@@ -38,63 +28,32 @@ show_banner() {
 show_usage() {
     echo "Usage: $0 [OPTIONS]"
     echo
-    echo "Docker and Docker Compose Installation Script"
+    echo "Options:"
+    echo "  --allow-root    Allow running as root user"
+    echo "  --help          Show this help message"
     echo
-    echo "OPTIONS:"
-    echo "  --allow-root    Allow running as root user (not recommended)"
-    echo "  -h, --help      Show this help message"
-    echo
-    echo "EXAMPLES:"
-    echo "  $0                    # Install Docker as regular user"
-    echo "  $0 --allow-root       # Install Docker as root (not recommended)"
-    echo
-}
-
-# Logging functions
-log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    echo "This script will install Docker and Docker Compose on your system."
+    echo "Supported distributions: Ubuntu, Debian, CentOS, RHEL, Fedora, Arch Linux"
 }
 
 # Check if running as root
 check_root() {
-    if [[ $EUID -eq 0 ]]; then
-        if [[ "$ALLOW_ROOT" == "true" ]]; then
-            log_warning "Running as root with --allow-root flag. This is not recommended for security reasons."
-            log_info "Script will continue but please consider running as a regular user."
-        else
-            log_error "This script should not be run as root for security reasons."
-            log_info "Please run as a regular user. The script will use sudo when needed."
-            log_info "Or use --allow-root flag if you must run as root."
-            exit 1
-        fi
+    if [[ $EUID -eq 0 && "$ALLOW_ROOT" != "true" ]]; then
+        log_error "This script should not be run as root for security reasons."
+        log_info "If you really need to run as root, use --allow-root flag"
+        log_info "It's recommended to run as a regular user with sudo privileges"
+        exit 1
     fi
 }
 
 # Check if user has sudo privileges
 check_sudo() {
-    # Skip sudo check if running as root
-    if [[ $EUID -eq 0 ]]; then
-        log_info "Running as root, skipping sudo privilege check"
-        return 0
-    fi
-    
     if ! sudo -n true 2>/dev/null; then
-        log_error "This script requires sudo privileges."
-        log_info "Please ensure your user is in the sudo group and can run sudo commands."
+        log_error "This script requires sudo privileges"
+        log_info "Please make sure your user is in the sudo group"
         exit 1
     fi
+    log_success "Sudo privileges confirmed"
 }
 
 # Detect the operating system
@@ -102,57 +61,36 @@ detect_os() {
     if [[ -f /etc/os-release ]]; then
         . /etc/os-release
         OS=$ID
-        VER=$VERSION_ID
+        VERSION=$VERSION_ID
     else
-        log_error "Cannot detect operating system. /etc/os-release not found."
+        log_error "Cannot detect operating system"
         exit 1
     fi
     
-    log_info "Detected OS: $PRETTY_NAME"
+    log_info "Detected OS: $OS $VERSION"
 }
 
 # Check if Docker is already installed
 check_docker_installed() {
     if command -v docker &> /dev/null; then
-        DOCKER_VERSION=$(docker --version | cut -d' ' -f3 | sed 's/,$//')
+        DOCKER_VERSION=$(docker --version | cut -d' ' -f3 | tr -d ',')
         log_warning "Docker is already installed (version: $DOCKER_VERSION)"
-        
-        read -p "Do you want to reinstall Docker? (y/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            log_info "Skipping Docker installation"
-            SKIP_DOCKER=true
-        else
-            log_info "Proceeding with Docker reinstallation"
-            SKIP_DOCKER=false
-        fi
+        return 0
     else
-        SKIP_DOCKER=false
+        log_info "Docker is not installed"
+        return 1
     fi
 }
 
 # Check if Docker Compose is already installed
 check_docker_compose_installed() {
-    if command -v docker-compose &> /dev/null || docker compose version &> /dev/null 2>&1; then
-        if command -v docker-compose &> /dev/null; then
-            COMPOSE_VERSION=$(docker-compose --version | cut -d' ' -f3 | sed 's/,$//')
-            log_warning "Docker Compose is already installed (version: $COMPOSE_VERSION)"
-        else
-            COMPOSE_VERSION=$(docker compose version --short 2>/dev/null || echo "unknown")
-            log_warning "Docker Compose (plugin) is already installed (version: $COMPOSE_VERSION)"
-        fi
-        
-        read -p "Do you want to reinstall Docker Compose? (y/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            log_info "Skipping Docker Compose installation"
-            SKIP_COMPOSE=true
-        else
-            log_info "Proceeding with Docker Compose reinstallation"
-            SKIP_COMPOSE=false
-        fi
+    if command -v docker-compose &> /dev/null; then
+        COMPOSE_VERSION=$(docker-compose --version | cut -d' ' -f3 | tr -d ',')
+        log_warning "Docker Compose is already installed (version: $COMPOSE_VERSION)"
+        return 0
     else
-        SKIP_COMPOSE=false
+        log_info "Docker Compose is not installed"
+        return 1
     fi
 }
 
@@ -160,271 +98,156 @@ check_docker_compose_installed() {
 install_docker_ubuntu_debian() {
     log_info "Installing Docker on Ubuntu/Debian..."
     
-    # Remove old versions
-    if [[ $EUID -eq 0 ]]; then
-        apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
-        apt-get update
-        apt-get install -y ca-certificates curl gnupg lsb-release
-        mkdir -p /etc/apt/keyrings
-    else
-        sudo apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
-        sudo apt-get update
-        sudo apt-get install -y ca-certificates curl gnupg lsb-release
-        sudo mkdir -p /etc/apt/keyrings
-    fi
+    # Update package index
+    log_info "Updating package index..."
+    sudo apt-get update
+    
+    # Install required packages
+    log_info "Installing required packages..."
+    sudo apt-get install -y \
+        apt-transport-https \
+        ca-certificates \
+        curl \
+        gnupg \
+        lsb-release
     
     # Add Docker's official GPG key
-    if [[ $EUID -eq 0 ]]; then
-        curl -fsSL https://download.docker.com/linux/$OS/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    else
-        curl -fsSL https://download.docker.com/linux/$OS/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    fi
+    log_info "Adding Docker's GPG key..."
+    curl -fsSL https://download.docker.com/linux/$OS/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
     
-    # Set up the repository
-    if [[ $EUID -eq 0 ]]; then
-        echo \
-            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$OS \
-            $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-        apt-get update
-        apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    else
-        echo \
-            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$OS \
-            $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-        sudo apt-get update
-        sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    fi
+    # Add Docker repository
+    log_info "Adding Docker repository..."
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/$OS $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
     
-    log_success "Docker installed successfully on Ubuntu/Debian"
+    # Update package index again
+    sudo apt-get update
+    
+    # Install Docker
+    log_info "Installing Docker CE..."
+    sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+    
+    log_success "Docker installed successfully"
 }
 
 # Install Docker on CentOS/RHEL/Fedora
 install_docker_centos_rhel_fedora() {
     log_info "Installing Docker on CentOS/RHEL/Fedora..."
     
-    # Remove old versions
-    if [[ $EUID -eq 0 ]]; then
-        yum remove -y docker docker-client docker-client-latest docker-common docker-latest docker-latest-logrotate docker-logrotate docker-engine 2>/dev/null || true
-    else
-        sudo yum remove -y docker docker-client docker-client-latest docker-common docker-latest docker-latest-logrotate docker-logrotate docker-engine 2>/dev/null || true
-    fi
-    
-    # Install prerequisites
+    # Install required packages
+    log_info "Installing required packages..."
     if [[ "$OS" == "fedora" ]]; then
-        if [[ $EUID -eq 0 ]]; then
-            dnf install -y dnf-plugins-core
-            dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
-            dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-        else
-            sudo dnf install -y dnf-plugins-core
-            sudo dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
-            sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-        fi
+        sudo dnf -y install dnf-plugins-core
+        sudo dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
+        sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
     else
-        if [[ $EUID -eq 0 ]]; then
-            yum install -y yum-utils
-            yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-            yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-        else
-            sudo yum install -y yum-utils
-            sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-            sudo yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-        fi
+        sudo yum install -y yum-utils
+        sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+        sudo yum install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
     fi
     
-    log_success "Docker installed successfully on CentOS/RHEL/Fedora"
+    log_success "Docker installed successfully"
 }
 
 # Install Docker on Arch Linux
 install_docker_arch() {
     log_info "Installing Docker on Arch Linux..."
     
-    # Update package database and install Docker
-    if [[ $EUID -eq 0 ]]; then
-        pacman -Sy
-        pacman -S --noconfirm docker docker-compose
-    else
-        sudo pacman -Sy
-        sudo pacman -S --noconfirm docker docker-compose
-    fi
+    # Update package database
+    log_info "Updating package database..."
+    sudo pacman -Sy
     
-    log_success "Docker installed successfully on Arch Linux"
+    # Install Docker
+    log_info "Installing Docker..."
+    sudo pacman -S --noconfirm docker docker-compose
+    
+    log_success "Docker installed successfully"
 }
 
-# Install Docker based on detected OS
-install_docker() {
-    if [[ "$SKIP_DOCKER" == "true" ]]; then
-        return
-    fi
-    
-    case $OS in
-        ubuntu|debian)
-            install_docker_ubuntu_debian
-            ;;
-        centos|rhel|rocky|almalinux)
-            install_docker_centos_rhel_fedora
-            ;;
-        fedora)
-            install_docker_centos_rhel_fedora
-            ;;
-        arch|manjaro)
-            install_docker_arch
-            ;;
-        *)
-            log_error "Unsupported operating system: $OS"
-            log_info "Supported systems: Ubuntu, Debian, CentOS, RHEL, Fedora, Arch Linux"
-            exit 1
-            ;;
-    esac
-}
-
-# Install Docker Compose (standalone) if not installed via plugin
+# Install Docker Compose (if not already installed)
 install_docker_compose() {
-    if [[ "$SKIP_COMPOSE" == "true" ]]; then
-        return
-    fi
-    
-    # Check if Docker Compose plugin is available
-    if docker compose version &> /dev/null; then
-        log_info "Docker Compose plugin is already available"
-        return
-    fi
-    
-    log_info "Installing Docker Compose standalone..."
-    
-    # Get latest version
-    COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep -Po '"tag_name": "\K.*?(?=")')
-    
-    # Download and install
-    if [[ $EUID -eq 0 ]]; then
-        curl -L "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-        chmod +x /usr/local/bin/docker-compose
-        ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
-    else
-        sudo curl -L "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    if ! command -v docker-compose &> /dev/null; then
+        log_info "Installing Docker Compose..."
+        
+        # Download Docker Compose
+        COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep 'tag_name' | cut -d\" -f4)
+        log_info "Latest Docker Compose version: $COMPOSE_VERSION"
+        
+        sudo curl -L "https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+        
+        # Make it executable
         sudo chmod +x /usr/local/bin/docker-compose
+        
+        # Create symlink
         sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
+        
+        log_success "Docker Compose installed successfully"
     fi
-    
-    log_success "Docker Compose $COMPOSE_VERSION installed successfully"
 }
 
 # Configure Docker
 configure_docker() {
     log_info "Configuring Docker..."
     
-    # Start and enable Docker service
-    if [[ $EUID -eq 0 ]]; then
-        systemctl start docker
-        systemctl enable docker
-    else
-        sudo systemctl start docker
-        sudo systemctl enable docker
-    fi
-    
-    # Add current user to docker group (skip if running as root)
-    if [[ $EUID -ne 0 ]]; then
+    # Add user to docker group
+    if ! groups $USER | grep -q docker; then
+        log_info "Adding user $USER to docker group..."
         sudo usermod -aG docker $USER
-        log_info "User $USER added to docker group"
-        log_warning "Please log out and log back in for group changes to take effect"
+        log_warning "You need to log out and back in for group changes to take effect"
     else
-        log_info "Running as root, skipping docker group assignment"
+        log_info "User $USER is already in docker group"
     fi
     
-    log_success "Docker service started and enabled"
+    # Enable and start Docker service
+    log_info "Enabling and starting Docker service..."
+    sudo systemctl enable docker
+    sudo systemctl start docker
+    
+    log_success "Docker service is running"
 }
 
-# Test Docker installation
-test_docker() {
-    log_info "Testing Docker installation..."
+# Verify installation
+verify_installation() {
+    log_info "Verifying installation..."
     
-    # Test Docker (use sudo only if not running as root)
-    if [[ $EUID -eq 0 ]]; then
-        if docker run --rm hello-world &> /dev/null; then
-            log_success "Docker is working correctly"
-        else
-            log_error "Docker test failed"
-        fi
-    else
-        if sudo docker run --rm hello-world &> /dev/null; then
-            log_success "Docker is working correctly"
-        else
-            log_error "Docker test failed"
-        fi
-    fi
-    
-    # Test Docker Compose
-    if command -v docker-compose &> /dev/null; then
-        COMPOSE_VERSION=$(docker-compose --version)
-        log_success "Docker Compose is available: $COMPOSE_VERSION"
-    elif docker compose version &> /dev/null; then
-        COMPOSE_VERSION=$(docker compose version)
-        log_success "Docker Compose plugin is available: $COMPOSE_VERSION"
-    else
-        log_error "Docker Compose test failed"
-    fi
-}
-
-# Show installation summary
-show_summary() {
-    echo
-    log_info "Installation Summary:"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
-    # Docker version
+    # Check Docker version
     if command -v docker &> /dev/null; then
         DOCKER_VERSION=$(docker --version)
-        echo -e "${GREEN}✓${NC} Docker: $DOCKER_VERSION"
+        log_success "Docker: $DOCKER_VERSION"
     else
-        echo -e "${RED}✗${NC} Docker: Not installed"
+        log_error "Docker installation failed"
+        return 1
     fi
     
-    # Docker Compose version
+    # Check Docker Compose version
     if command -v docker-compose &> /dev/null; then
         COMPOSE_VERSION=$(docker-compose --version)
-        echo -e "${GREEN}✓${NC} Docker Compose: $COMPOSE_VERSION"
-    elif docker compose version &> /dev/null 2>&1; then
-        COMPOSE_VERSION=$(docker compose version)
-        echo -e "${GREEN}✓${NC} Docker Compose Plugin: $COMPOSE_VERSION"
+        log_success "Docker Compose: $COMPOSE_VERSION"
     else
-        echo -e "${RED}✗${NC} Docker Compose: Not installed"
+        log_error "Docker Compose installation failed"
+        return 1
     fi
     
-    # Docker service status
-    if systemctl is-active --quiet docker; then
-        echo -e "${GREEN}✓${NC} Docker Service: Running"
+    # Test Docker with hello-world
+    log_info "Running Docker test..."
+    if sudo docker run --rm hello-world &>/dev/null; then
+        log_success "Docker test completed successfully"
     else
-        echo -e "${RED}✗${NC} Docker Service: Not running"
+        log_warning "Docker test failed - this might be normal if the user isn't in docker group yet"
     fi
     
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo
-    log_info "Next Steps:"
-    if [[ $EUID -ne 0 ]]; then
-        echo "1. Log out and log back in to apply group changes"
-        echo "2. Run 'docker --version' to verify installation"
-        echo "3. Run 'docker compose --version' to verify Docker Compose"
-        echo "4. Start using Docker with your MariaDB Backup System!"
-    else
-        echo "1. Run 'docker --version' to verify installation"
-        echo "2. Run 'docker compose --version' to verify Docker Compose"
-        echo "3. Start using Docker with your MariaDB Backup System!"
-        echo "4. Consider creating a non-root user for regular Docker usage"
-    fi
-    echo
-    log_success "Docker installation completed successfully!"
+    return 0
 }
 
-# Main installation function
+# Main function
 main() {
-    # Parse command line arguments
+    # Parse arguments
     while [[ $# -gt 0 ]]; do
         case $1 in
             --allow-root)
                 ALLOW_ROOT=true
                 shift
                 ;;
-            -h|--help)
+            --help)
                 show_usage
                 exit 0
                 ;;
@@ -438,29 +261,66 @@ main() {
     
     show_banner
     
-    log_info "Starting Docker installation process..."
-    
-    # Perform checks
+    # Check prerequisites
     check_root
     check_sudo
     detect_os
-    check_docker_installed
-    check_docker_compose_installed
     
-    # Install components
-    install_docker
-    install_docker_compose
+    # Check if already installed
+    DOCKER_INSTALLED=false
+    COMPOSE_INSTALLED=false
+    
+    if check_docker_installed; then
+        DOCKER_INSTALLED=true
+    fi
+    
+    if check_docker_compose_installed; then
+        COMPOSE_INSTALLED=true
+    fi
+    
+    # Install Docker if not already installed
+    if [[ "$DOCKER_INSTALLED" == "false" ]]; then
+        case $OS in
+            ubuntu|debian)
+                install_docker_ubuntu_debian
+                ;;
+            centos|rhel|rocky|almalinux)
+                install_docker_centos_rhel_fedora
+                ;;
+            fedora)
+                install_docker_centos_rhel_fedora
+                ;;
+            arch|manjaro)
+                install_docker_arch
+                ;;
+            *)
+                log_error "Unsupported operating system: $OS"
+                exit 1
+                ;;
+        esac
+    fi
+    
+    # Install Docker Compose if not already installed
+    if [[ "$COMPOSE_INSTALLED" == "false" ]]; then
+        install_docker_compose
+    fi
+    
+    # Configure Docker
     configure_docker
     
-    # Test installation
-    test_docker
-    
-    # Show summary
-    show_summary
+    # Verify installation
+    if verify_installation; then
+        log_success "Installation completed successfully!"
+        echo
+        log_info "Next steps:"
+        log_info "1. Log out and back in (or run 'newgrp docker')"
+        log_info "2. Test Docker with: docker run hello-world"
+        log_info "3. Test Docker Compose with: docker-compose --version"
+    else
+        log_error "Installation verification failed"
+        exit 1
+    fi
 }
-
-# Handle script interruption
-trap 'log_error "Installation interrupted by user"; exit 1' INT TERM
 
 # Run main function
 main "$@"

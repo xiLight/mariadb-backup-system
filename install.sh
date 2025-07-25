@@ -3,12 +3,8 @@
 
 set -e
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Load logging functions
+source "./lib/logging.sh"
 
 print_banner() {
     echo -e "${BLUE}"
@@ -23,22 +19,6 @@ print_banner() {
     echo "║  Discord: https://discord.com/invite/FaHcQnunFp             ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
-}
-
-log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
 }
 
 # Check if running as root
@@ -140,6 +120,10 @@ setup_environment() {
 setup_directories() {
     log_info "Creating necessary directories..."
     
+    # Create lib directory first for logging system
+    mkdir -p lib
+    
+    # Create other directories
     mkdir -p backups/{binlogs,checksums,incr,binlog_info}
     mkdir -p logs
     mkdir -p mariadb_data
@@ -151,7 +135,13 @@ setup_directories() {
 setup_permissions() {
     log_info "Setting up script permissions..."
     
+    # Make all shell scripts executable
     chmod +x *.sh
+    
+    # Make lib scripts executable too
+    if [ -d "lib" ]; then
+        chmod +x lib/*.sh 2>/dev/null || true
+    fi
     
     log_success "Made all scripts executable"
 }
@@ -199,14 +189,31 @@ start_services() {
     
     # Wait for MariaDB to be ready
     log_info "Waiting for MariaDB to be ready..."
-    for i in {1..30}; do
-        if docker exec mariadb mariadb --protocol=socket --socket=/run/mysqld/mysqld.sock -u root -e "SELECT 1;" &>/dev/null; then
+    
+    # First wait for container to be running
+    sleep 5
+    
+    # Get the root password from .env file
+    ROOT_PASSWORD=$(grep MARIADB_ROOT_PASSWORD .env | cut -d'=' -f2)
+    
+    for i in {1..60}; do
+        # Try multiple connection methods
+        if docker exec mariadb mariadb -u root -p"$ROOT_PASSWORD" -h 127.0.0.1 -P 3306 -e "SELECT 1;" &>/dev/null; then
+            log_success "MariaDB is ready!"
+            break
+        elif docker exec mariadb mariadb -u root -p"$ROOT_PASSWORD" --protocol=tcp --host=localhost --port=3306 -e "SELECT 1;" &>/dev/null; then
+            log_success "MariaDB is ready!"
+            break
+        elif docker exec mariadb mariadb -u root -p"$ROOT_PASSWORD" -e "SELECT 1;" &>/dev/null; then
             log_success "MariaDB is ready!"
             break
         fi
-        if [ $i -eq 30 ]; then
-            log_error "MariaDB failed to start within 30 seconds"
+        
+        if [ $i -eq 60 ]; then
+            log_error "MariaDB failed to start within 60 seconds"
             log_info "Check logs with: docker logs mariadb"
+            log_info "Trying to show recent container logs:"
+            docker logs --tail 20 mariadb
             exit 1
         fi
         sleep 1
@@ -237,29 +244,60 @@ show_completion_info() {
     echo "1. Review and customize your .env file"
     echo "2. Start using the backup system:"
     echo -e "   ${YELLOW}./backup.sh --full --include-empty${NC}  # Full backup"
-    echo -e "   ${YELLOW}./backup.sh${NC}                        # Incremental backup"
+    echo -e "   ${YELLOW}./backup.sh --incremental${NC}            # Incremental backup"
     echo
     echo -e "${BLUE}Useful Commands:${NC}"
     echo -e "   ${YELLOW}docker logs mariadb${NC}               # View MariaDB logs"
     echo -e "   ${YELLOW}./cleanup_backups.sh${NC}              # Clean old backups"
     echo -e "   ${YELLOW}./restore.sh${NC}                      # Restore from backup"
+    echo -e "   ${YELLOW}./health_check.sh${NC}                 # System health check"
+    echo -e "   ${YELLOW}./log_cleanup.sh${NC}                  # Clean log files"
     echo
     echo -e "${BLUE}Configuration Files:${NC}"
     echo -e "   ${YELLOW}.env${NC}                             # Environment variables"
     echo -e "   ${YELLOW}my_custom.cnf${NC}                     # MariaDB configuration"
     echo -e "   ${YELLOW}.backup_encryption_key${NC}           # Backup encryption key"
+    echo -e "   ${YELLOW}lib/logging.sh${NC}                   # Central logging system"
     echo
     echo -e "${BLUE}Log Files:${NC}"
     echo -e "   ${YELLOW}logs/backup.log${NC}                  # Backup operations"
     echo -e "   ${YELLOW}logs/restore.log${NC}                 # Restore operations"
-    echo -e "   ${YELLOW}logs/cleanup.log${NC}                 # Cleanup operations"
+    echo -e "   ${YELLOW}logs/cleanup_backups.log${NC}         # Backup cleanup operations"
+    echo -e "   ${YELLOW}logs/cleanup_binlogs.log${NC}         # Binlog cleanup operations"
+    echo -e "   ${YELLOW}logs/encrypt.log${NC}                 # Encryption operations"
+    echo
+    echo -e "${BLUE}Logging System:${NC}"
+    echo "All scripts now use a centralized logging system located in lib/logging.sh"
+    echo "You can customize colors and logging format in one central location."
     echo
     echo -e "${RED}Important:${NC} Please save your credentials and encryption key securely!"
     echo
 }
 
+# Verify logging system is available
+check_logging_system() {
+    if [ ! -f "lib/logging.sh" ]; then
+        log_error "Central logging system not found at lib/logging.sh"
+        log_info "Please ensure the lib/logging.sh file exists and is properly configured"
+        exit 1
+    fi
+    log_success "Central logging system found"
+}
+
 # Main installation function
 main() {
+    # Create lib directory early for logging system
+    mkdir -p lib
+    
+    # Check if logging system exists (after creating lib directory)
+    if [ -f "lib/logging.sh" ]; then
+        check_logging_system
+    else
+        # If logging.sh doesn't exist, we need to create it or the script will fail
+        echo "Warning: lib/logging.sh not found. Please ensure it exists before running install.sh"
+        exit 1
+    fi
+    
     print_banner
     
     check_root

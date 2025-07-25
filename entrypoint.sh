@@ -1,6 +1,17 @@
 #!/bin/bash
 set -e
 
+# Load logging functions
+if [ -f "/usr/local/lib/logging.sh" ]; then
+    source "/usr/local/lib/logging.sh"
+else
+    # Fallback logging functions
+    log_info() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1"; }
+    log_success() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUCCESS] $1"; }
+    log_warning() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARNING] $1"; }
+    log_error() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1"; }
+fi
+
 # Use environment variables passed by docker-compose
 # These are already available as environment variables
 
@@ -12,17 +23,11 @@ TMP_DIR="/tmp/binlogs"
 # Error handling function
 handle_error() {
   local error_msg="$1"
-  echo "[ERROR] $error_msg" >&2
+  log_error "$error_msg"
   exit 1
 }
 
-# Logging function with timestamp
-log() {
-  local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-  echo "[$timestamp] $1"
-}
-
-log "Starting MariaDB initialization process"
+log_info "Starting MariaDB initialization process"
 
 # Check if required environment variables are set
 if [ -z "$MARIADB_ROOT_PASSWORD" ]; then
@@ -30,7 +35,7 @@ if [ -z "$MARIADB_ROOT_PASSWORD" ]; then
 fi
 
 # Create necessary directories
-log "Creating directories"
+log_info "Creating directories"
 mkdir -p "$DATADIR" || handle_error "Failed to create data directory"
 mkdir -p "$BINLOG_DIR" || handle_error "Failed to create binlog directory" 
 mkdir -p "$TMP_DIR" || handle_error "Failed to create temp binlog directory"
@@ -43,30 +48,30 @@ chmod 755 "/run/mysqld"
 
 # Initialize database if it doesn't exist
 if [ ! -d "$DATADIR/mysql" ]; then
-  log "Initializing MariaDB database in data directory: $DATADIR"
+  log_info "Initializing MariaDB database in data directory: $DATADIR"
 
   # Initialize database with proper settings
-  log "Running mariadb-install-db..."
+  log_info "Running mariadb-install-db..."
   mariadb-install-db --user=mysql --datadir="$DATADIR" --basedir=/usr --skip-test-db --verbose || {
-    log "mariadb-install-db failed, trying alternative method..."
+    log_info "mariadb-install-db failed, trying alternative method..."
     # Try alternative initialization method
     mariadbd --initialize-insecure --user=mysql --datadir="$DATADIR" --basedir=/usr || handle_error "Failed to initialize database with both methods"
   }
 
-  log "Starting MariaDB temporarily for initialization via Unix socket..."
+  log_info "Starting MariaDB temporarily for initialization via Unix socket..."
   mariadbd --user=mysql --datadir="$DATADIR" --socket=/run/mysqld/mysqld.sock --skip-networking --pid-file=/run/mysqld/mysqld.pid &
   pid=$!
 
   # Wait for MariaDB to become available
-  log "Waiting for MariaDB socket..."
+  log_info "Waiting for MariaDB socket..."
   for i in {1..60}; do
     if [ -S /run/mysqld/mysqld.sock ]; then
-      log "Socket found at /run/mysqld/mysqld.sock"
+      log_info "Socket found at /run/mysqld/mysqld.sock"
       break
     fi
     sleep 1
     if [ "$i" = 60 ]; then
-      log "Socket not found, checking alternative locations..."
+      log_info "Socket not found, checking alternative locations..."
       find /var /run /tmp -name "*.sock" 2>/dev/null | head -10
       handle_error "Timed out waiting for MariaDB socket"
     fi
@@ -82,10 +87,10 @@ if [ ! -d "$DATADIR/mysql" ]; then
       handle_error "Timed out waiting for MariaDB to respond"
     fi
   done
-  log "MariaDB started successfully"
+  log_success "MariaDB started successfully"
 
   # Create databases and users for external access
-  log "Creating databases and users for external access..."
+  log_info "Creating databases and users for external access..."
   
   mariadb --protocol=socket --socket=/run/mysqld/mysqld.sock -u root <<EOF
 -- Create databases first
@@ -134,41 +139,46 @@ FLUSH PRIVILEGES;
 EOF
 
   if [ $? -eq 0 ]; then
-    log "Databases and users created successfully"
+    log_success "Databases and users created successfully"
   else
     handle_error "Failed to create databases and users"
   fi
 
   # Verify databases were created
-  log "Verifying created databases:"
+  log_info "Verifying created databases:"
   mariadb --protocol=socket --socket=/run/mysqld/mysqld.sock -u root -p"$MARIADB_ROOT_PASSWORD" -e "SHOW DATABASES;" | grep -E "^($MARIADB_DATABASE1|$MARIADB_DATABASE2|$MARIADB_DATABASE3|$MARIADB_DATABASE4|$MARIADB_DATABASE5)$"
 
-  log "Verifying created users:"
+  log_info "Verifying created users:"
   mariadb --protocol=socket --socket=/run/mysqld/mysqld.sock -u root -p"$MARIADB_ROOT_PASSWORD" -e "SELECT User, Host FROM mysql.user WHERE User NOT IN ('', 'mysql.sys', 'mysql.session', 'mysql.infoschema') ORDER BY User, Host;"
 
   # Stop the temporary MariaDB instance
-  log "Stopping temporary MariaDB instance..."
+  log_info "Stopping temporary MariaDB instance..."
   kill "$pid"
   wait "$pid" 2>/dev/null || true
 
 else
-  log "MariaDB data directory already exists, skipping initialization"
+  log_info "MariaDB data directory already exists, skipping initialization"
 fi
 
-log "Starting MariaDB server with networking enabled..."
+log_info "Starting MariaDB server with networking enabled..."
 
 # Verify configuration file exists
 if [ -f "/etc/mysql/conf.d/my_custom.cnf" ]; then
-  log "Configuration file found: /etc/mysql/conf.d/my_custom.cnf"
-  log "Configuration file contents preview:"
+  log_info "Configuration file found: /etc/mysql/conf.d/my_custom.cnf"
+  log_info "Configuration file contents preview:"
   head -10 "/etc/mysql/conf.d/my_custom.cnf" | while read line; do
-    log "  $line"
+    log_info "  $line"
   done
 else
-  log "WARNING: Configuration file not found at /etc/mysql/conf.d/my_custom.cnf"
-  log "Available files in /etc/mysql/conf.d/:"
-  ls -la /etc/mysql/conf.d/ || log "Directory does not exist"
+  log_warning "Configuration file not found at /etc/mysql/conf.d/my_custom.cnf"
+  log_info "Available files in /etc/mysql/conf.d/:"
+  ls -la /etc/mysql/conf.d/ || log_info "Directory does not exist"
 fi
+
+# Ensure binary log directory exists with proper permissions
+mkdir -p /var/lib/mysql/binlogs
+chown -R mysql:mysql /var/lib/mysql/binlogs
+chmod -R 750 /var/lib/mysql/binlogs
 
 # Start MariaDB with explicit bind-address to override any defaults
 exec mariadbd --user=mysql --datadir="$DATADIR" --bind-address=0.0.0.0

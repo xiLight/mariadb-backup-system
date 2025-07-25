@@ -31,7 +31,7 @@ server-id = 1
 binlog_format = ROW
 expire_logs_days = 30
 max_binlog_size = 100M
-log_bin = /var/lib/mysql/binlogs/mysql-bin
+log_bin = mysql-bin   # Binlog-Pfad auf Standardverzeichnis gesetzt
 sync_binlog = 0  # For better performance (less safe, but we have backups)
 
 # GTID settings for better replication and backup consistency

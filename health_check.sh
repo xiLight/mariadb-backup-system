@@ -1,28 +1,8 @@
 #!/bin/bash
 # Health Check Script for MariaDB Backup System
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
+# Load logging functions
+source "./lib/logging.sh"
 
 print_header() {
     echo -e "${BLUE}╔═══════════════════════════════════════════════════════════════╗${NC}"
@@ -268,6 +248,16 @@ main() {
     check_encryption_key || OVERALL_STATUS=1
     check_recent_backups || OVERALL_STATUS=1
     run_backup_test "$1" || OVERALL_STATUS=1
+    
+    # Add a section to check binary logging status
+    echo "Checking binary logging status:"
+    docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -e "SHOW VARIABLES LIKE 'log_bin%';"
+    docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -e "SHOW VARIABLES LIKE 'binlog%';"
+    docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -e "SHOW BINARY LOGS;"
+    
+    # Check binary log directory permissions
+    echo "Checking binary log directory permissions:"
+    docker exec "$MARIADB_CONTAINER" ls -la /var/lib/mysql/binlogs
     
     show_summary
     

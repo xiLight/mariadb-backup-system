@@ -1,12 +1,8 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Load logging functions
+source "./lib/logging.sh"
 
 # Version
 BACKUP_VERSION="1.0.0"
@@ -25,30 +21,11 @@ mkdir -p "./logs"
 # Error handling function
 function handle_error {
   local exit_code=$1
-  local error_msg=$2
+  shift
+  local error_msg="$*"
   log_error "$error_msg (exit code: $exit_code)"
+  log_both "ERROR" "$error_msg (exit code: $exit_code)" "$LOG_FILE"
   exit $exit_code
-}
-
-# Logging functions with timestamps
-log_info() {
-  local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-  echo -e "${BLUE}[$timestamp] [INFO] $1${NC}" | tee -a "$LOG_FILE"
-}
-
-log_success() {
-  local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-  echo -e "${GREEN}[$timestamp] [SUCCESS] $1${NC}" | tee -a "$LOG_FILE"
-}
-
-log_warning() {
-  local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-  echo -e "${YELLOW}[$timestamp] [WARNING] $1${NC}" | tee -a "$LOG_FILE"
-}
-
-log_error() {
-  local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-  echo -e "${RED}[$timestamp] [ERROR] $1${NC}" | tee -a "$LOG_FILE"
 }
 
 # Source environment variables
@@ -61,415 +38,723 @@ source .env || handle_error 1 "Failed to source .env file"
 
 # Parse arguments for --key and --include-empty BEFORE database detection
 ENCRYPT_KEY_FILE=".backup_encryption_key"
-INCLUDE_EMPTY_DBS=false
-NEW_ARGS=()
+INCLUDE_EMPTY_DATABASES=false
+BACKUP_MODE="full"
+SPECIFIC_DATABASE=""
+COMPRESS_BACKUPS=true
+CREATE_CHECKSUMS=true
+
+# Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
+    --full)
+      BACKUP_MODE="full"
+      shift
+      ;;
+    --incremental)
+      BACKUP_MODE="incremental"
+      shift
+      ;;
+    --database)
+      SPECIFIC_DATABASE="$2"
+      shift 2
+      ;;
+    --include-empty)
+      INCLUDE_EMPTY_DATABASES=true
+      shift
+      ;;
     --key)
       ENCRYPT_KEY_FILE="$2"
       shift 2
       ;;
-    --include-empty)
-      INCLUDE_EMPTY_DBS=true
+    --no-compress)
+      COMPRESS_BACKUPS=false
       shift
       ;;
-    *)
-      NEW_ARGS+=("$1")
+    --no-checksums)
+      CREATE_CHECKSUMS=false
       shift
+      ;;
+    --help)
+      echo "MariaDB Backup Script v$BACKUP_VERSION"
+      echo ""
+      echo "Usage: $0 [OPTIONS]"
+      echo ""
+      echo "Backup modes:"
+      echo "  --full                 Create full backup (default)"
+      echo "  --incremental          Create incremental backup"
+      echo ""
+      echo "Options:"
+      echo "  --database DB          Backup specific database only"
+      echo "  --include-empty        Include databases with no tables"
+      echo "  --key FILE             Specify encryption key file (default: .backup_encryption_key)"
+      echo "  --no-compress          Don't compress backup files"
+      echo "  --no-checksums         Don't create checksum files"
+      echo "  --help                 Show this help message"
+      echo ""
+      echo "Environment variables (from .env):"
+      echo "  MARIADB_CONTAINER      MariaDB container name"
+      echo "  MARIADB_ROOT_PASSWORD  MariaDB root password"
+      echo "  BACKUP_DIR             Backup directory"
+      echo "  BINLOG_DIR             Binary log backup directory"
+      echo ""
+      exit 0
+      ;;
+    *)
+      handle_error 2 "Unknown option: $1"
       ;;
   esac
 done
-set -- "${NEW_ARGS[@]}"
 
-# Function to get all databases from MariaDB server
-get_all_databases() {
-  # Query all databases excluding system databases
-  DATABASES=$(docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -N -e "SHOW DATABASES;" | grep -v -E "^(information_schema|performance_schema|mysql|sys)$" 2>/dev/null)
-  echo "$DATABASES"
-}
+# Start timing and logging
+BACKUP_START_TIME=$(date +%s)
+BACKUP_START_DATE=$(date '+%Y-%m-%d %H:%M:%S')
 
-# Ensure backup directories exist
-mkdir -p "$BACKUP_DIR" || handle_error 2 "Failed to create backup directory"
-mkdir -p "$BINLOG_BACKUP_DIR" || handle_error 2 "Failed to create binlog backup directory"
-mkdir -p "$CHECKSUM_DIR" || handle_error 2 "Failed to create checksum directory"
-mkdir -p "$INCR_INFO_DIR" || handle_error 2 "Failed to create incremental info directory"
-mkdir -p "$BINLOG_INFO_DIR" || handle_error 2 "Failed to create binlog info directory"
+log_info "Starting backup process (version $BACKUP_VERSION) at $BACKUP_START_DATE"
+log_both "INFO" "Starting backup process (version $BACKUP_VERSION) at $BACKUP_START_DATE" "$LOG_FILE"
+log_info "Backup mode: $BACKUP_MODE"
+log_both "INFO" "Backup mode: $BACKUP_MODE" "$LOG_FILE"
 
-TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-
-# Function to create a checksum file for a backup
-create_checksum() {
-  local file="$1"
-  local checksum_file="$CHECKSUM_DIR/$(basename "$file").sha256"
-  
-  if command -v sha256sum &> /dev/null; then
-    sha256sum "$file" | awk '{print $1}' > "$checksum_file"
-  else
-    # Fallback for systems without sha256sum
-    openssl dgst -sha256 "$file" | sed 's/^.* //' > "$checksum_file"
-  fi
-  
-  log_info "Created checksum for $file"
-}
-
-# Function to verify a checksum
-verify_checksum() {
-  local file="$1"
-  local checksum_file="$CHECKSUM_DIR/$(basename "$file").sha256"
-  
-  if [ ! -f "$checksum_file" ]; then
-    log_error "Checksum file not found for $file"
-    return 1
-  fi
-  
-  local expected_checksum=$(cat "$checksum_file")
-  local actual_checksum
-  
-  if command -v sha256sum &> /dev/null; then
-    actual_checksum=$(sha256sum "$file" | awk '{print $1}')
-  else
-    # Fallback for systems without sha256sum
-    actual_checksum=$(openssl dgst -sha256 "$file" | sed 's/^.* //')
-  fi
-  
-  if [ "$actual_checksum" = "$expected_checksum" ]; then
-    log_info "Checksum verified for $file"
-    return 0
-  else
-    log_error "Checksum verification failed for $file"
-    return 1
-  fi
-}
-
-# Get all database names from MariaDB server or fallback to .env
-DBS=()
-
-# Try to get databases from server first
-DB_LIST=$(get_all_databases)
-if [[ -n "$DB_LIST" ]]; then
-  log_info "Raw database list from server: $DB_LIST"
-  # Convert to array for debugging
-  readarray -t DB_ARRAY <<< "$DB_LIST"
-  log_info "Total databases found: ${#DB_ARRAY[@]}"
-  
-  # Read the databases into the array, checking for tables unless --include-empty is specified
-  db_count=0
-  while IFS= read -r line; do
-    db_count=$((db_count + 1))
-    # Skip empty lines
-    if [[ -z "$line" ]]; then
-      log_info "DEBUG: Skipping empty line at position $db_count"
-      continue
-    fi
-    
-    log_info "Processing database $db_count: '$line'"
-    
-    # Skip the special 'binlogs' database as it cannot be backed up with mysqldump
-    if [[ "$line" == "binlogs" ]]; then
-      log_warning "Skipping 'binlogs' database - this is a special MariaDB system database that cannot be backed up"
-      continue
-    fi
-    
-    # Check if database has any tables
-    log_info "DEBUG: Checking table count for database '$line'..."
-    TABLE_COUNT=$(docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$line';" 2>/dev/null || echo "0")
-    log_info "DEBUG: Table count for '$line': $TABLE_COUNT"
-    
-    if [[ "$TABLE_COUNT" -gt 0 ]]; then
-      DBS+=("$line")
-      log_info "Database $line has $TABLE_COUNT tables - will be backed up"
-    elif [[ "$INCLUDE_EMPTY_DBS" == true ]]; then
-      DBS+=("$line")
-      log_info "Database $line is empty (0 tables) - backing up anyway due to --include-empty flag"
-    else
-      log_warning "Database $line is empty (0 tables) - skipping backup"
-    fi
-    
-    log_info "DEBUG: Finished processing database '$line', continuing to next..."
-  done <<< "$DB_LIST"
-  
-  log_info "DEBUG: Finished processing all databases. Total processed: $db_count"
-  log_info "Automatically detected databases from server: ${DBS[*]}"
-else
-  # Fallback to .env file if server query fails
-  log_warning "Could not detect databases from server, falling back to .env file"
-  for i in {1..5}; do
-    VAR="MARIADB_DATABASE${i}"
-    DB_NAME="${!VAR}"
-    if [[ -n "$DB_NAME" ]]; then
-      # Check if this database exists and has tables
-      TABLE_COUNT=$(docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$DB_NAME';" 2>/dev/null || echo "0")
-      if [[ "$TABLE_COUNT" -gt 0 ]]; then
-        DBS+=("$DB_NAME")
-        log_info "Database $DB_NAME has $TABLE_COUNT tables - will be backed up"
-      elif [[ "$INCLUDE_EMPTY_DBS" == true ]]; then
-        DBS+=("$DB_NAME")
-        log_info "Database $DB_NAME is empty (0 tables) - backing up anyway due to --include-empty flag"
-      else
-        log_warning "Database $DB_NAME is empty (0 tables) - skipping backup"
-      fi
-    fi
-  done
-fi
-
-log_info "Starting backup process (version $BACKUP_VERSION)"
-log_info "Found ${#DBS[@]} databases to backup: ${DBS[*]}"
-
-# Ensure each database exists before backing up
-for DB in "${DBS[@]}"; do
-  docker exec -i "$MARIADB_CONTAINER" mariadb -e "CREATE DATABASE IF NOT EXISTS $DB;" || log_warning "Failed to create database $DB - may already exist"
+# Create necessary directories
+for dir in "$BACKUP_DIR" "$BINLOG_BACKUP_DIR" "$BINLOG_INFO_DIR" "$CHECKSUM_DIR" "$INCR_INFO_DIR"; do
+  mkdir -p "$dir" || handle_error 3 "Failed to create directory: $dir"
 done
 
-# Process databases in parallel for full backups
-backup_database() {
-  local DB=$1
-  local FULL_BACKUP=$2
-  local FULL_BACKUP_FILE="$BACKUP_DIR/${DB}_full_${TIMESTAMP}.sql"
-  local BINLOG_INFO_FILE="$BINLOG_INFO_DIR/last_binlog_info_${DB}_${TIMESTAMP}.txt"
+# Generate timestamp for this backup session
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
-  log_info "Creating Full Backup for DB: $DB => $FULL_BACKUP_FILE"
+# Check if encryption key exists, create if not
+if [[ ! -f "$ENCRYPT_KEY_FILE" ]]; then
+  log_warning "Encryption key not found, generating new one: $ENCRYPT_KEY_FILE"
+  log_both "WARNING" "Generating new encryption key: $ENCRYPT_KEY_FILE" "$LOG_FILE"
+  openssl rand -base64 32 > "$ENCRYPT_KEY_FILE" || handle_error 4 "Failed to generate encryption key"
+  chmod 600 "$ENCRYPT_KEY_FILE"
+  log_warning "New encryption key created. KEEP THIS SAFE!"
+  log_both "WARNING" "New encryption key created at $ENCRYPT_KEY_FILE" "$LOG_FILE"
+fi
 
-  # Check if mysqldump works inside the container
-  MYSQLDUMP_CMD=""
-  if docker exec "$MARIADB_CONTAINER" which mysqldump &>/dev/null; then
-    MYSQLDUMP_CMD="mysqldump"
-    log_info "Using mysqldump for backup"
-  elif docker exec "$MARIADB_CONTAINER" which mariadb-dump &>/dev/null; then
-    MYSQLDUMP_CMD="mariadb-dump"
-    log_info "Using mariadb-dump for backup (mysqldump not found)"
-  else
-    # Try to find mysqldump in common locations
-    MYSQLDUMP_PATH=$(docker exec "$MARIADB_CONTAINER" find / -name mysqldump 2>/dev/null | head -n1)
-    if [[ -n "$MYSQLDUMP_PATH" ]]; then
-      MYSQLDUMP_CMD="$MYSQLDUMP_PATH"
-      log_info "Using mysqldump from: $MYSQLDUMP_PATH"
-    else
-      MYSQLDUMP_PATH=$(docker exec "$MARIADB_CONTAINER" find / -name mariadb-dump 2>/dev/null | head -n1)
-      if [[ -n "$MYSQLDUMP_PATH" ]]; then
-        MYSQLDUMP_CMD="$MYSQLDUMP_PATH"
-        log_info "Using mariadb-dump from: $MYSQLDUMP_PATH"
-      else
-        log_error "Neither mysqldump nor mariadb-dump found in container!"
-        return 1
-      fi
-    fi
-  fi
+# Test database connection
+log_info "Testing database connection..."
+log_info "Container: $MARIADB_CONTAINER"
+log_info "Password length: ${#MARIADB_ROOT_PASSWORD} characters"
 
-  # Test the connection first
-  log_info "Testing database connection for $DB..."
-  if ! docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -e "USE $DB; SELECT 1;" >/dev/null 2>&1; then
-    log_error "Cannot connect to database $DB or database does not exist"
-    return 1
-  fi
+# Try multiple connection methods
+CONNECTION_SUCCESS=false
 
-  # Dump with Binlog-Info in header (try with --master-data first, fallback without)
-  log_info "Attempting backup with binary log information..."
-  DUMP_ERROR_FILE="/tmp/dump_error_${DB}_$$.log"
-  if docker exec "$MARIADB_CONTAINER" $MYSQLDUMP_CMD --single-transaction --master-data=2 -u root -p"$MARIADB_ROOT_PASSWORD" "$DB" > "$FULL_BACKUP_FILE" 2>"$DUMP_ERROR_FILE"; then
-    log_success "Full Backup for $DB successfully created with binary log information"
-  elif docker exec "$MARIADB_CONTAINER" $MYSQLDUMP_CMD --single-transaction -u root -p"$MARIADB_ROOT_PASSWORD" "$DB" > "$FULL_BACKUP_FILE" 2>"$DUMP_ERROR_FILE"; then
-    log_success "Full Backup for $DB successfully created (without binary log information)"
-    log_warning "Binary log information not available - incremental backups may not work"
-  else
-    log_error "Error creating Full Backup for $DB!"
-    if [[ -f "$DUMP_ERROR_FILE" ]]; then
-      log_error "Dump error details: $(cat "$DUMP_ERROR_FILE" 2>/dev/null || echo 'Could not read error file')"
-      rm -f "$DUMP_ERROR_FILE"
-    fi
-    return 1
-  fi
-  
-  # Clean up error file if backup was successful
-  rm -f "$DUMP_ERROR_FILE"
+# Method 1: Try without host/port (socket connection)
+if docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -e "SELECT 1;" &>/dev/null; then
+  log_success "Database connection successful (socket)"
+  CONNECTION_SUCCESS=true
+  CONNECTION_METHOD="socket"
+elif docker exec "$MARIADB_CONTAINER" mariadb -u root -e "SELECT 1;" &>/dev/null; then
+  log_success "Database connection successful (socket, no password)"
+  CONNECTION_SUCCESS=true
+  CONNECTION_METHOD="socket_nopass"
+elif docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -h 127.0.0.1 -P 3306 -e "SELECT 1;" &>/dev/null; then
+  log_success "Database connection successful (TCP)"
+  CONNECTION_SUCCESS=true
+  CONNECTION_METHOD="tcp"
+fi
 
-  # Extract Binlog-Info from dump (if available)
-  MASTER_LINE=$(grep -m1 '^-- CHANGE MASTER TO' "$FULL_BACKUP_FILE" 2>/dev/null || echo "")
-  if [[ -n "$MASTER_LINE" ]]; then
-    BINLOG=$(echo "$MASTER_LINE" | sed -n "s/.*MASTER_LOG_FILE='\\([^']*\\)'.*/\\1/p")
-    POS=$(echo "$MASTER_LINE" | sed -n "s/.*MASTER_LOG_POS=\\([0-9]*\\).*/\\1/p")
-    if [[ -n "$BINLOG" && -n "$POS" ]]; then
-      echo "$BINLOG $POS" > "$BINLOG_INFO_FILE"
-      log_info "Binlog-Info saved: $BINLOG_INFO_FILE ($BINLOG at position $POS)"
-    else
-      log_warning "Could not extract valid binlog information from backup"
-      echo "unknown 0" > "$BINLOG_INFO_FILE"
-    fi
-  else
-    log_warning "No binlog information found in backup (binary logging may not be enabled)"
-    echo "unknown 0" > "$BINLOG_INFO_FILE"
-  fi
+if [[ "$CONNECTION_SUCCESS" != "true" ]]; then
+  log_error "All connection methods failed"
+  handle_error 5 "Cannot connect to MariaDB container: $MARIADB_CONTAINER"
+fi
 
-  # Compress backup with progress indicator
-  log_info "Compressing backup file for $DB..."
-  if command -v pv &> /dev/null; then
-    # Use pv for progress indication if available
-    pv "$FULL_BACKUP_FILE" | gzip > "$FULL_BACKUP_FILE.gz"
-  else
-    gzip -f "$FULL_BACKUP_FILE"
-  fi
-  
-  # Encrypt if safety mode is enabled
-  log_info "Encrypting backup file for $DB (Encryption always enabled)..."
-  ./encrypt_backup.sh --encrypt "$FULL_BACKUP_FILE.gz" --key ".backup_encryption_key" || handle_error 10 "Error encrypting $FULL_BACKUP_FILE.gz"
-  rm -f "$FULL_BACKUP_FILE.gz"
-  log_success "Backup for $DB encrypted successfully."
-  
-  # Create checksum for compressed file
-  create_checksum "$FULL_BACKUP_FILE.gz.enc"
-  
-  # Cleanup uncompressed file
-  rm -f "$FULL_BACKUP_FILE"
-  
-  log_success "Full backup for $DB completed"
+# Function to execute MariaDB commands with the working connection method
+execute_mariadb_command() {
+  local command="$1"
+  case "$CONNECTION_METHOD" in
+    "socket")
+      docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -e "$command"
+      ;;
+    "socket_nopass")
+      docker exec "$MARIADB_CONTAINER" mariadb -u root -e "$command"
+      ;;
+    "tcp")
+      docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -h 127.0.0.1 -P 3306 -e "$command"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
-if [ "$1" == "--full" ]; then
-  log_info "Checking and preparing binary log system..."
+# Function to execute MariaDB dump with the working connection method
+execute_mariadb_dump() {
+  local database="$1"
+  local output_file="$2"
   
-  # Check if binary logging is enabled
-  BINLOG_ENABLED=$(docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -N -e "SELECT @@log_bin;" 2>/dev/null || echo "0")
-  
-  if [[ "$BINLOG_ENABLED" == "1" ]]; then
-    log_info "Binary logging is enabled, preparing directories..."
-    
-    # Get the actual binlog path from configuration
-    BINLOG_BASE=$(docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -N -e "SELECT @@log_bin_basename;" 2>/dev/null || echo "")
-    
-    if [[ -n "$BINLOG_BASE" ]]; then
-      BINLOG_DIR_PATH=$(dirname "$BINLOG_BASE")
-      log_info "Binary log directory: $BINLOG_DIR_PATH"
-      
-      # Create binlog directory if it doesn't exist
-      docker exec "$MARIADB_CONTAINER" mkdir -p "$BINLOG_DIR_PATH" || log_warning "Could not create binlog directory"
-      docker exec "$MARIADB_CONTAINER" chown mysql:mysql "$BINLOG_DIR_PATH" 2>/dev/null || log_warning "Could not set binlog directory permissions"
-      
-      # Try to flush binary logs
-      log_info "Forcing binlog rotation (FLUSH BINARY LOGS)..."
-      if docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -e "FLUSH BINARY LOGS;" 2>/dev/null; then
-        log_success "Binary logs flushed successfully"
-      else
-        log_warning "Failed to flush binary logs - continuing with backup anyway"
+  # First try with binary log features
+  log_info "Attempting backup with binary log features..."
+  case "$CONNECTION_METHOD" in
+    "socket")
+      if docker exec "$MARIADB_CONTAINER" mariadb-dump \
+        -u root -p"$MARIADB_ROOT_PASSWORD" \
+        --lock-tables \
+        --routines \
+        --triggers \
+        --master-data=2 \
+        --flush-logs \
+        --databases "$database" > "$output_file" 2>/dev/null; then
+        log_success "Backup created with binary log features"
+        return 0
       fi
-    else
-      log_warning "Could not determine binary log path - skipping binlog flush"
-    fi
-  else
-    log_warning "Binary logging is not enabled - backups will not include binary log information"
-  fi
+      ;;
+    "socket_nopass")
+      if docker exec "$MARIADB_CONTAINER" mariadb-dump \
+        -u root \
+        --lock-tables \
+        --routines \
+        --triggers \
+        --master-data=2 \
+        --flush-logs \
+        --databases "$database" > "$output_file" 2>/dev/null; then
+        log_success "Backup created with binary log features"
+        return 0
+      fi
+      ;;
+    "tcp")
+      if docker exec "$MARIADB_CONTAINER" mariadb-dump \
+        -u root -p"$MARIADB_ROOT_PASSWORD" \
+        -h 127.0.0.1 \
+        -P 3306 \
+        --lock-tables \
+        --routines \
+        --triggers \
+        --master-data=2 \
+        --flush-logs \
+        --databases "$database" > "$output_file" 2>/dev/null; then
+        log_success "Backup created with binary log features"
+        return 0
+      fi
+      ;;
+  esac
+  
+  # If that fails, try without binary log features
+  log_warning "Binary log features failed, trying fallback method..."
+  case "$CONNECTION_METHOD" in
+    "socket")
+      docker exec "$MARIADB_CONTAINER" mariadb-dump \
+        -u root -p"$MARIADB_ROOT_PASSWORD" \
+        --lock-tables \
+        --routines \
+        --triggers \
+        --databases "$database" > "$output_file"
+      ;;
+    "socket_nopass")
+      docker exec "$MARIADB_CONTAINER" mariadb-dump \
+        -u root \
+        --lock-tables \
+        --routines \
+        --triggers \
+        --databases "$database" > "$output_file"
+      ;;
+    "tcp")
+      docker exec "$MARIADB_CONTAINER" mariadb-dump \
+        -u root -p"$MARIADB_ROOT_PASSWORD" \
+        -h 127.0.0.1 \
+        -P 3306 \
+        --lock-tables \
+        --routines \
+        --triggers \
+        --databases "$database" > "$output_file"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
 
-  # Start parallel backups if parallel command is available
-  if command -v parallel &> /dev/null; then
-    log_info "Using parallel processing for database backups"
-    # Export functions and variables needed by the parallel processes
-    export -f backup_database log_info log_success log_error log_warning create_checksum
-    export BACKUP_DIR TIMESTAMP MARIADB_CONTAINER CHECKSUM_DIR MARIADB_ROOT_PASSWORD
-    
-    # Run backups in parallel with a max of 3 concurrent jobs
-    printf "%s\n" "${DBS[@]}" | parallel -j 3 "backup_database {} true"
-  else
-    log_info "Parallel command not available, running backups sequentially"
-    for DB in "${DBS[@]}"; do
-      backup_database "$DB" true
-    done
+# Get list of databases
+if [[ -n "$SPECIFIC_DATABASE" ]]; then
+  # Verify specific database exists
+  if ! execute_mariadb_command "USE \`$SPECIFIC_DATABASE\`;" &>/dev/null; then
+    handle_error 6 "Database '$SPECIFIC_DATABASE' does not exist"
   fi
+  DATABASES=("$SPECIFIC_DATABASE")
+  log_info "Backing up specific database: $SPECIFIC_DATABASE"
 else
-  log_info "Incremental backup: saving only new binlogs"
-  
-  # Check if binary logging is enabled before attempting incremental backup
-  BINLOG_ENABLED=$(docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -N -e "SELECT @@log_bin;" 2>/dev/null || echo "0")
-  
-  if [[ "$BINLOG_ENABLED" == "1" ]]; then
-    if docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -e "FLUSH BINARY LOGS;" 2>/dev/null; then
-      log_success "Binary logs flushed for incremental backup"
-    else
-      log_warning "Failed to flush binary logs for incremental backup - continuing anyway"
-    fi
+  # Get all non-system databases
+  mapfile -t DATABASES < <(execute_mariadb_command "SHOW DATABASES;" 2>/dev/null | tail -n +2 | grep -v -E "^(information_schema|performance_schema|mysql|sys)$")
+  log_info "Found ${#DATABASES[@]} databases to backup: ${DATABASES[*]}"
+fi
 
-    for DB in "${DBS[@]}"; do
-      # Save binlog info after incremental backup
-      BINLOG_STATUS=$(docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -e "SHOW MASTER STATUS;" 2>/dev/null | tail -n1)
-      if [[ -n "$BINLOG_STATUS" && "$BINLOG_STATUS" != "Variable_name" ]]; then
-        CURRENT_BINLOG=$(echo "$BINLOG_STATUS" | awk '{print $1}')
-        CURRENT_POS=$(echo "$BINLOG_STATUS" | awk '{print $2}')
-        if [[ -n "$CURRENT_BINLOG" && -n "$CURRENT_POS" ]]; then
-          INCR_INFO_FILE="$INCR_INFO_DIR/last_binlog_info_${DB}_${TIMESTAMP}_incr.txt"
-          echo "$CURRENT_BINLOG $CURRENT_POS" > "$INCR_INFO_FILE"
-          log_success "Binlog-Info after incremental backup saved: $INCR_INFO_FILE"
-        else
-          log_warning "Could not get valid binlog position for $DB"
-        fi
-      else
-        log_warning "Could not get master status for $DB"
-      fi
-    done
+log_both "INFO" "Found ${#DATABASES[@]} databases: ${DATABASES[*]}" "$LOG_FILE"
+
+# Initialize statistics
+TOTAL_DATABASES=0
+SUCCESSFUL_BACKUPS=0
+FAILED_BACKUPS=0
+SKIPPED_DATABASES=0
+TOTAL_BACKUP_SIZE=0
+
+# Kopiere Binlog-Dateien aus dem Container ins lokale Backup-Verzeichnis (immer zu Beginn)
+BINLOG_CONTAINER_PATH="/var/lib/mysql"
+log_info "Synchronisiere Binlog-Dateien aus dem Container..."
+docker cp "$MARIADB_CONTAINER:$BINLOG_CONTAINER_PATH/mysql-bin.index" "$BINLOG_BACKUP_DIR/" 2>/dev/null || log_warning "mysql-bin.index nicht gefunden"
+for binlog in $(docker exec "$MARIADB_CONTAINER" bash -c "ls $BINLOG_CONTAINER_PATH/mysql-bin.* 2>/dev/null"); do
+  BINLOG_FILE=$(basename "$binlog")
+  docker cp "$MARIADB_CONTAINER:$BINLOG_CONTAINER_PATH/$BINLOG_FILE" "$BINLOG_BACKUP_DIR/" 2>/dev/null || log_warning "$BINLOG_FILE nicht gefunden"
+done
+
+# Correct the binary log backup function - this is important for incremental backups
+if [[ "$BACKUP_MODE" == "full" ]]; then
+  log_info "Backing up binary logs..."
+  
+  # We know that the binary logs are mounted at /var/lib/mysql/binlogs in the container
+  # (according to docker-compose.yml volume mapping)
+  BINLOG_PATH="/var/lib/mysql/binlogs"
+  
+  # Check if the path exists
+  if docker exec "$MARIADB_CONTAINER" test -d "$BINLOG_PATH"; then
+    log_info "Using binary log path: $BINLOG_PATH"
+    
+    # Create temp directory for copying
+    docker exec "$MARIADB_CONTAINER" mkdir -p /tmp/binlogs
+    
+    # Copy binary logs to temp directory
+    docker exec "$MARIADB_CONTAINER" bash -c "cp $BINLOG_PATH/mysql-bin.* /tmp/binlogs/ 2>/dev/null"
+    
+    # Copy from container to host
+    if docker cp "$MARIADB_CONTAINER:/tmp/binlogs/." "$BINLOG_BACKUP_DIR/"; then
+      log_success "Binary logs backed up successfully"
+      log_both "INFO" "Binary logs backed up to $BINLOG_BACKUP_DIR" "$LOG_FILE"
+    else
+      log_warning "Failed to copy binary logs from container or no binary logs found"
+    fi
   else
-    log_warning "Binary logging is not enabled - incremental backup not possible"
+    log_warning "Binary log directory not found in container: $BINLOG_PATH"
+    log_both "WARNING" "Binary log directory not found in container: $BINLOG_PATH" "$LOG_FILE"
   fi
 fi
 
-log_info "Backing up completed binlog files..."
-
-# Create temp directory for binlog operations
-docker exec "$MARIADB_CONTAINER" mkdir -p /tmp/binlogs 2>/dev/null || log_warning "Could not create temp binlog directory"
-
-# Get binlog list (only if binary logging is enabled)
-BINLOG_LIST=$(docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -e "SHOW BINARY LOGS;" 2>/dev/null | awk 'NR>1 {print $1}' || echo "")
-
-if [[ -z "$BINLOG_LIST" ]]; then
-  log_warning "No binary logs found or binary logging is not enabled"
-else
-  LAST_BINLOG=$(echo "$BINLOG_LIST" | tail -n1)
-  log_info "Found binary logs to backup: $(echo "$BINLOG_LIST" | wc -l) files"
-
-  # Get binlog directory from container
-  CONTAINER_BINLOG_DIR=$(docker exec "$MARIADB_CONTAINER" mariadb -u root -p"$MARIADB_ROOT_PASSWORD" -N -e "SELECT @@log_bin_basename;" 2>/dev/null | sed 's/mysql-bin$//' || echo "/var/lib/mysql/")
-
-  for BINLOG in $BINLOG_LIST; do
-    if [[ "$BINLOG" == "$LAST_BINLOG" ]]; then
-      log_warning "Skipping $BINLOG (currently open, not backing up)"
-      continue
-    fi
-    BACKUP_BINLOG="$BINLOG_BACKUP_DIR/$BINLOG"
-    if [[ -f "$BACKUP_BINLOG" ]]; then
-      log_warning "Skipping $BINLOG (already backed up)"
-      continue
-    fi
-    log_info "Copying $BINLOG from container..."
-    
-    # Try multiple potential paths for binlog files
-    BACKUP_SUCCESS=false
-    
-    # Try the configured binlog path first
-    if docker cp "$MARIADB_CONTAINER:$CONTAINER_BINLOG_DIR/$BINLOG" "$BACKUP_BINLOG" 2>/dev/null; then
-      BACKUP_SUCCESS=true
-    # Try common default paths
-    elif docker cp "$MARIADB_CONTAINER:/var/lib/mysql/binlogs/$BINLOG" "$BACKUP_BINLOG" 2>/dev/null; then
-      BACKUP_SUCCESS=true
-    elif docker cp "$MARIADB_CONTAINER:/var/lib/mysql/$BINLOG" "$BACKUP_BINLOG" 2>/dev/null; then
-      BACKUP_SUCCESS=true
-    # Try to find the binlog file anywhere in the container
+# Improve binary log position detection for full backups
+if [[ "$BACKUP_MODE" == "full" ]]; then
+  log_info "Attempting to get binary log position..."
+  
+  # Try different commands for different MariaDB versions
+  BINLOG_INFO=$(execute_mariadb_command "SHOW MASTER STATUS\G" 2>/dev/null)
+  
+  if [[ -z "$BINLOG_INFO" || "$BINLOG_INFO" == *"Empty set"* ]]; then
+    # Try alternative syntax
+    BINLOG_INFO=$(execute_mariadb_command "SHOW BINARY LOGS;" 2>/dev/null | tail -1)
+  fi
+  
+  if [[ -n "$BINLOG_INFO" ]]; then
+    # Extract files and positions (supports different output formats)
+    if [[ "$BINLOG_INFO" == *"File:"* ]]; then
+      # Format from SHOW MASTER STATUS\G
+      BINLOG_FILE=$(echo "$BINLOG_INFO" | grep "File:" | awk '{print $2}')
+      BINLOG_POS=$(echo "$BINLOG_INFO" | grep "Position:" | awk '{print $2}')
     else
-      BINLOG_LOCATION=$(docker exec "$MARIADB_CONTAINER" find /var/lib/mysql -name "$BINLOG" 2>/dev/null | head -n1)
-      if [[ -n "$BINLOG_LOCATION" ]] && docker cp "$MARIADB_CONTAINER:$BINLOG_LOCATION" "$BACKUP_BINLOG" 2>/dev/null; then
-        BACKUP_SUCCESS=true
-      fi
+      # Format from SHOW BINARY LOGS or SHOW MASTER STATUS
+      BINLOG_FILE=$(echo "$BINLOG_INFO" | awk '{print $1}')
+      BINLOG_POS=$(echo "$BINLOG_INFO" | awk '{print $2}')
     fi
     
-        if [[ "$BACKUP_SUCCESS" == "true" ]]; then
-      log_success "$BINLOG successfully backed up"
-      # Create checksum for binlog file
-      create_checksum "$BACKUP_BINLOG"
+    # Save the binary log position
+    if [[ -n "$BINLOG_FILE" && -n "$BINLOG_POS" ]]; then
+      BINLOG_INFO_FILE="$BINLOG_INFO_DIR/last_binlog_info_${DB}_${TIMESTAMP}.txt"
+      echo "$BINLOG_FILE $BINLOG_POS" > "$BINLOG_INFO_FILE"
+      log_success "Binary log position saved: $BINLOG_FILE:$BINLOG_POS"
+    fi
+  else
+    log_warning "Binary log information not available. Check if binary logging is enabled."
+    log_both "WARNING" "Binary logging may not be enabled on the server" "$LOG_FILE"
+  fi
+fi
+
+# Improve incremental backup binary log processing
+if [[ "$BACKUP_MODE" == "incremental" ]]; then
+  # Since we know the path, we set it directly
+  BINLOG_PATH_IN_CONTAINER="/var/lib/mysql/binlogs"
+  
+  # For each binary log, extract
+  for bl_file in "${BINLOG_FILES[@]}"; do
+    bl_name=$(basename "$bl_file")
+    log_info "Processing binary log: $bl_name"
+    
+    # Copy the binlog file to the container for processing, if necessary
+    docker cp "$bl_file" "$MARIADB_CONTAINER:$BINLOG_PATH_IN_CONTAINER/$bl_name" 2>/dev/null
+    
+    # Extract SQL from binary log with correct path
+    if docker exec "$MARIADB_CONTAINER" mysqlbinlog \
+      $START_POS $STOP_POS \
+      --database="$DB" \
+      "$BINLOG_PATH_IN_CONTAINER/$bl_name" >> "$BACKUP_FILE" 2>/dev/null; then
+      log_info "Processed binary log: $bl_name"
     else
-      log_warning "Could not backup $BINLOG - file not found in container"
-      # Try to locate binlog files for debugging
-      BINLOG_FILES=$(docker exec "$MARIADB_CONTAINER" find /var/lib/mysql -name "mysql-bin.*" -o -name "mariadb-bin.*" 2>/dev/null | head -5)
-      if [[ -n "$BINLOG_FILES" ]]; then
-        log_info "Available binlog files in container: $(echo "$BINLOG_FILES" | tr '\n' ' ')"
-      else
-        log_warning "No binlog files found in container"
-      fi
+      log_warning "Failed to process binary log: $bl_name"
     fi
   done
 fi
 
-log_success "Backup completed successfully."
+# Backup each database
+for DB in "${DATABASES[@]}"; do
+  TOTAL_DATABASES=$((TOTAL_DATABASES + 1))
+  
+  log_info "Processing database: $DB"
+  log_both "INFO" "Processing database: $DB" "$LOG_FILE"
+  
+  # Check if database has tables (unless --include-empty is specified)
+  if [[ "$INCLUDE_EMPTY_DATABASES" == "false" ]]; then
+    TABLE_COUNT=$(execute_mariadb_command "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '$DB';" 2>/dev/null | tail -n +2 || echo "0")
+    
+    if [[ "$TABLE_COUNT" == "0" ]]; then
+      log_warning "Database $DB has no tables, skipping (use --include-empty to backup anyway)"
+      log_both "WARNING" "Database $DB skipped (no tables)" "$LOG_FILE"
+      SKIPPED_DATABASES=$((SKIPPED_DATABASES + 1))
+      continue
+    fi
+  fi
+  
+  # Create backup filename
+  if [[ "$BACKUP_MODE" == "full" ]]; then
+    BACKUP_FILE="$BACKUP_DIR/${DB}_full_${TIMESTAMP}.sql"
+  else
+    BACKUP_FILE="$BACKUP_DIR/${DB}_incremental_${TIMESTAMP}.sql"
+  fi
+  
+  # Create the backup
+  log_info "Creating backup: $(basename "$BACKUP_FILE")"
+  
+  if [[ "$BACKUP_MODE" == "full" ]]; then
+    # Full backup with binary log position
+    if execute_mariadb_dump "$DB" "$BACKUP_FILE"; then
+      log_success "Full backup created: $(basename "$BACKUP_FILE")"
+    else
+      log_error "Failed to create backup for database: $DB"
+      log_both "ERROR" "Failed to create backup for database: $DB" "$LOG_FILE"
+      FAILED_BACKUPS=$((FAILED_BACKUPS + 1))
+      continue
+    fi
+  else
+    # Incremental backup (binary logs)
+    log_info "Creating incremental backup using binary logs..."
+    
+    # Find the last full backup binlog info
+    LAST_BINLOG_INFO_FILE=$(find "$BINLOG_INFO_DIR" -name "last_binlog_info_${DB}_*.txt" -type f | sort | tail -1)
+    
+    if [[ -z "$LAST_BINLOG_INFO_FILE" || ! -f "$LAST_BINLOG_INFO_FILE" ]]; then
+      log_error "No previous full backup found for database $DB. Run full backup first."
+      log_both "ERROR" "No previous full backup found for database $DB" "$LOG_FILE"
+      FAILED_BACKUPS=$((FAILED_BACKUPS + 1))
+      continue
+    fi
+    
+    # Read last binlog position
+    read LAST_BINLOG_FILE LAST_BINLOG_POS < "$LAST_BINLOG_INFO_FILE"
+    log_info "Last backup position: $LAST_BINLOG_FILE:$LAST_BINLOG_POS"
+    
+    # Get current binary log position
+    CURRENT_BINLOG_INFO=$(execute_mariadb_command "SHOW MASTER STATUS;" 2>/dev/null | tail -n +2)
+    if [[ -z "$CURRENT_BINLOG_INFO" ]]; then
+      # Try filesystem method
+      LATEST_BINLOG=$(docker exec "$MARIADB_CONTAINER" find /var/lib/mysql -name "mysql-bin.*" -not -name "*.idx" | sort -V | tail -1)
+      if [[ -n "$LATEST_BINLOG" ]]; then
+        CURRENT_BINLOG_FILE=$(basename "$LATEST_BINLOG")
+        CURRENT_BINLOG_POS=$(docker exec "$MARIADB_CONTAINER" stat -c%s "$LATEST_BINLOG" 2>/dev/null || echo "4")
+      else
+        # Versuche als Fallback, die aktuelle Position aus unserem Backup-Verzeichnis zu bestimmen
+        log_info "Trying to determine current binary log position from backup directory..."
+        
+        # Finde die neueste Binlog-Datei im Backup-Verzeichnis (OHNE .idx oder .index)
+        LATEST_BINLOG=$(find "$BINLOG_BACKUP_DIR" -type f -name "mysql-bin.*" ! -name "*.idx" ! -name "*.index" | sort -V | tail -1)
+        
+        if [[ -n "$LATEST_BINLOG" ]]; then
+          CURRENT_BINLOG_FILE=$(basename "$LATEST_BINLOG")
+          # Ermittle die tatsächliche Dateigröße als Position
+          CURRENT_BINLOG_POS=$(stat -c%s "$LATEST_BINLOG" 2>/dev/null || stat -f%z "$LATEST_BINLOG" 2>/dev/null || echo "4")
+          log_info "Found current binary log position from backup directory: $CURRENT_BINLOG_FILE:$CURRENT_BINLOG_POS"
+        else
+          log_error "Cannot determine current binary log position"
+          log_both "ERROR" "Cannot determine current binary log position for $DB" "$LOG_FILE"
+          FAILED_BACKUPS=$((FAILED_BACKUPS + 1))
+          continue
+        fi
+      fi
+    else
+      CURRENT_BINLOG_FILE=$(echo "$CURRENT_BINLOG_INFO" | awk '{print $1}')
+      CURRENT_BINLOG_POS=$(echo "$CURRENT_BINLOG_INFO" | awk '{print $2}')
+    fi
+    
+    log_info "Current position: $CURRENT_BINLOG_FILE:$CURRENT_BINLOG_POS"
+    
+    # Überprüfe die Gültigkeit der Binary Log-Daten vor der Verwendung
+    if [[ "$LAST_BINLOG_FILE" == *".idx"* ]]; then
+      # Korrigiere fehlerhafte .idx-Dateinamen in der letzten Position
+      LAST_BINLOG_FILE="${LAST_BINLOG_FILE%.idx}"
+      log_warning "Corrected last binary log filename (removed .idx suffix): $LAST_BINLOG_FILE"
+    fi
+    
+    if [[ "$CURRENT_BINLOG_FILE" == *".idx"* ]]; then
+      # Korrigiere fehlerhafte .idx-Dateinamen in der aktuellen Position
+      CURRENT_BINLOG_FILE="${CURRENT_BINLOG_FILE%.idx}"
+      log_warning "Corrected current binary log filename (removed .idx suffix): $CURRENT_BINLOG_FILE"
+    fi
+    
+    # Check if there are changes
+    if [[ "$LAST_BINLOG_FILE" == "$CURRENT_BINLOG_FILE" ]] && [[ "$LAST_BINLOG_POS" == "$CURRENT_BINLOG_POS" ]]; then
+      log_info "No changes since last backup, skipping incremental backup"
+      log_both "INFO" "No changes for $DB since last backup" "$LOG_FILE"
+      SKIPPED_DATABASES=$((SKIPPED_DATABASES + 1))
+      continue
+    fi
+    
+    # Create incremental backup from binary logs
+    INCR_BACKUP_SUCCESS=false
+    
+    # Find all binary log files between last and current position
+    BINLOG_FILES=()
+    if [[ ! -d "$BINLOG_BACKUP_DIR" ]]; then
+      log_error "Binary log backup directory not found: $BINLOG_BACKUP_DIR"
+      log_both "ERROR" "Binary log backup directory not found" "$LOG_FILE"
+      FAILED_BACKUPS=$((FAILED_BACKUPS + 1))
+      continue
+    fi
+    
+    # Nur Dateien ohne .idx Erweiterung berücksichtigen (echte Binary Log Dateien)
+    for bl_file in $(find "$BINLOG_BACKUP_DIR" -maxdepth 1 -type f -name "mysql-bin.*" ! -name "*.idx" ! -name "*.index" | sort -V); do
+      if [[ -f "$bl_file" ]]; then
+        BINLOG_FILES+=("$bl_file")
+      fi
+    done
+    
+    if [[ ${#BINLOG_FILES[@]} -eq 0 ]]; then
+      log_error "No valid binary log files found for incremental backup"
+      log_both "ERROR" "No valid binary log files found in $BINLOG_BACKUP_DIR" "$LOG_FILE"
+      FAILED_BACKUPS=$((FAILED_BACKUPS + 1))
+      continue
+    fi
+    
+    # Sort binlog files
+    IFS=$'\n' BINLOG_FILES=($(sort <<<"${BINLOG_FILES[*]}"))
+    unset IFS
+    
+    log_info "Processing ${#BINLOG_FILES[@]} binary log files for incremental backup"
+    
+    # Create incremental backup file
+    > "$BACKUP_FILE"  # Create empty file
+    
+    for bl_file in "${BINLOG_FILES[@]}"; do
+      bl_name=$(basename "$bl_file")
+      log_info "Processing binary log: $bl_name"
+      
+      # Überspringe mysql-bin.index und ähnliche Dateien
+      if [[ "$bl_name" == *".index"* ]]; then
+        log_info "Skipping index file: $bl_name"
+        continue
+      fi
+      
+      # Determine start and stop positions
+      START_POS=""
+      STOP_POS=""
+      
+      if [[ "$bl_name" == "$LAST_BINLOG_FILE" ]]; then
+        START_POS="--start-position=$LAST_BINLOG_POS"
+      fi
+      
+      if [[ "$bl_name" == "$CURRENT_BINLOG_FILE" ]]; then
+        STOP_POS="--stop-position=$CURRENT_BINLOG_POS"
+      fi
+      
+      # Extract SQL from binary log
+      if docker exec "$MARIADB_CONTAINER" mysqlbinlog \
+        $START_POS $STOP_POS \
+        --database="$DB" \
+        "$BINLOG_PATH_IN_CONTAINER/$bl_name" >> "$BACKUP_FILE" 2>/dev/null; then
+        log_info "Processed binary log: $bl_name"
+      else
+        log_warning "Failed to process binary log: $bl_name"
+      fi
+    done
+    
+    # Check if backup file has content
+    if [[ -s "$BACKUP_FILE" ]]; then
+      log_success "Incremental backup created: $(basename "$BACKUP_FILE")"
+      INCR_BACKUP_SUCCESS=true
+    else
+      log_warning "Incremental backup is empty, no relevant changes found"
+      log_both "WARNING" "Incremental backup for $DB is empty" "$LOG_FILE"
+      SKIPPED_DATABASES=$((SKIPPED_DATABASES + 1))
+      rm -f "$BACKUP_FILE"
+      continue
+    fi
+    
+    if [[ "$INCR_BACKUP_SUCCESS" != "true" ]]; then
+      log_error "Failed to create incremental backup for database: $DB"
+      log_both "ERROR" "Failed to create incremental backup for database: $DB" "$LOG_FILE"
+      FAILED_BACKUPS=$((FAILED_BACKUPS + 1))
+      continue
+    fi
+  fi
+  
+  # Get backup file size
+  BACKUP_SIZE=$(stat -c%s "$BACKUP_FILE" 2>/dev/null || stat -f%z "$BACKUP_FILE" 2>/dev/null || echo "0")
+  TOTAL_BACKUP_SIZE=$((TOTAL_BACKUP_SIZE + BACKUP_SIZE))
+  
+  # Compress backup if enabled
+  if [[ "$COMPRESS_BACKUPS" == "true" ]]; then
+    log_info "Compressing backup..."
+    if gzip "$BACKUP_FILE"; then
+      BACKUP_FILE="${BACKUP_FILE}.gz"
+      log_success "Backup compressed: $(basename "$BACKUP_FILE")"
+    else
+      log_error "Failed to compress backup"
+      log_both "ERROR" "Failed to compress backup for $DB" "$LOG_FILE"
+    fi
+  fi
+  
+  # Encrypt backup
+  log_info "Encrypting backup..."
+  if ./encrypt_backup.sh --encrypt "$BACKUP_FILE" --key "$ENCRYPT_KEY_FILE"; then
+    # Remove unencrypted file
+    rm -f "$BACKUP_FILE"
+    BACKUP_FILE="${BACKUP_FILE}.enc"
+    log_success "Backup encrypted: $(basename "$BACKUP_FILE")"
+  else
+    log_error "Failed to encrypt backup"
+    log_both "ERROR" "Failed to encrypt backup for $DB" "$LOG_FILE"
+    FAILED_BACKUPS=$((FAILED_BACKUPS + 1))
+    continue
+  fi
+  
+  # Create checksum if enabled
+  if [[ "$CREATE_CHECKSUMS" == "true" ]]; then
+    CHECKSUM_FILE="$CHECKSUM_DIR/$(basename "$BACKUP_FILE").sha256"
+    if command -v sha256sum &> /dev/null; then
+      sha256sum "$BACKUP_FILE" > "$CHECKSUM_FILE"
+    else
+      openssl dgst -sha256 "$BACKUP_FILE" | sed 's/^.* //' > "$CHECKSUM_FILE"
+    fi
+    log_info "Checksum created: $(basename "$CHECKSUM_FILE")"
+  fi
+  
+  # Save binary log position for full backups
+  if [[ "$BACKUP_MODE" == "full" ]]; then
+    # Get current binary log position - try different methods
+    log_info "Attempting to get binary log position..."
+    
+    # Method 1: Try SHOW MASTER STATUS
+    BINLOG_INFO=$(execute_mariadb_command "SHOW MASTER STATUS;" 2>/dev/null | tail -n +2)
+    
+    if [[ -n "$BINLOG_INFO" ]] && [[ "$BINLOG_INFO" != "" ]] && [[ "$BINLOG_INFO" != "NULL" ]]; then
+      BINLOG_FILE=$(echo "$BINLOG_INFO" | awk '{print $1}')
+      BINLOG_POS=$(echo "$BINLOG_INFO" | awk '{print $2}')
+      
+      # Check if we got valid data
+      if [[ -n "$BINLOG_FILE" ]] && [[ "$BINLOG_FILE" != "NULL" ]] && [[ "$BINLOG_FILE" != "" ]] && [[ -n "$BINLOG_POS" ]] && [[ "$BINLOG_POS" != "NULL" ]]; then
+        # Save binlog info
+        BINLOG_INFO_FILE="$BINLOG_INFO_DIR/last_binlog_info_${DB}_${TIMESTAMP}.txt"
+        echo "$BINLOG_FILE $BINLOG_POS" > "$BINLOG_INFO_FILE"
+        
+        log_success "Binary log position saved: $BINLOG_FILE:$BINLOG_POS"
+        log_both "INFO" "Binary log position for $DB: $BINLOG_FILE:$BINLOG_POS" "$LOG_FILE"
+      else
+        log_warning "Got invalid binary log data: '$BINLOG_INFO'"
+        # Try alternative method - get latest binlog file from filesystem
+        LATEST_BINLOG=$(docker exec "$MARIADB_CONTAINER" find /var/lib/mysql -name "mysql-bin.*" -not -name "*.index" | sort -V | tail -1)
+        if [[ -n "$LATEST_BINLOG" ]]; then
+          BINLOG_FILE=$(basename "$LATEST_BINLOG")
+          BINLOG_POS="4"  # Start position for binlog files
+          
+          BINLOG_INFO_FILE="$BINLOG_INFO_DIR/last_binlog_info_${DB}_${TIMESTAMP}.txt"
+          echo "$BINLOG_FILE $BINLOG_POS" > "$BINLOG_INFO_FILE"
+          log_info "Binary log position estimated from filesystem: $BINLOG_FILE:$BINLOG_POS"
+          log_both "INFO" "Binary log position (estimated) for $DB: $BINLOG_FILE:$BINLOG_POS" "$LOG_FILE"
+        else
+          log_warning "Could not determine binary log position"
+        fi
+      fi
+    else
+      log_warning "SHOW MASTER STATUS returned no data"
+      # Try alternative method - get latest binlog file from filesystem
+      LATEST_BINLOG=$(docker exec "$MARIADB_CONTAINER" find /var/lib/mysql -name "mysql-bin.*" -not -name "*.index" | sort -V | tail -1)
+      if [[ -n "$LATEST_BINLOG" ]]; then
+        BINLOG_FILE=$(basename "$LATEST_BINLOG")
+        BINLOG_POS="4"  # Start position for binlog files
+        
+        BINLOG_INFO_FILE="$BINLOG_INFO_DIR/last_binlog_info_${DB}_${TIMESTAMP}.txt"
+        echo "$BINLOG_FILE $BINLOG_POS" > "$BINLOG_INFO_FILE"
+        log_info "Binary log position estimated from filesystem: $BINLOG_FILE:$BINLOG_POS"
+        log_both "INFO" "Binary log position (estimated) for $DB: $BINLOG_FILE:$BINLOG_POS" "$LOG_FILE"
+      else
+        # Fallback: Check copied binlogs in our backup directory
+        LATEST_BINLOG=$(find "$BINLOG_BACKUP_DIR" -type f -name "mysql-bin.*" ! -name "*.idx" ! -name "*.index" | sort -V | tail -1 2>/dev/null)
+        if [[ -n "$LATEST_BINLOG" ]]; then
+          BINLOG_FILE=$(basename "$LATEST_BINLOG")
+          BINLOG_POS="4"  # Start position for binlog files
+          
+          BINLOG_INFO_FILE="$BINLOG_INFO_DIR/last_binlog_info_${DB}_${TIMESTAMP}.txt"
+          echo "$BINLOG_FILE $BINLOG_POS" > "$BINLOG_INFO_FILE"
+          log_info "Binary log position estimated from backup directory: $BINLOG_FILE:$BINLOG_POS"
+          log_both "INFO" "Binary log position (estimated from backups) for $DB: $BINLOG_FILE:$BINLOG_POS" "$LOG_FILE"
+        else
+          log_warning "No binary logs found anywhere. Incremental backups will not work until binary logging is enabled."
+        fi
+      fi
+    fi
+  elif [[ "$BACKUP_MODE" == "incremental" ]]; then
+    # Save current binary log position for incremental backups too
+    if [[ -n "$CURRENT_BINLOG_FILE" ]] && [[ -n "$CURRENT_BINLOG_POS" ]]; then
+      BINLOG_INFO_FILE="$BINLOG_INFO_DIR/last_binlog_info_${DB}_${TIMESTAMP}.txt"
+      echo "$CURRENT_BINLOG_FILE $CURRENT_BINLOG_POS" > "$BINLOG_INFO_FILE"
+      log_info "Updated binary log position: $CURRENT_BINLOG_FILE:$CURRENT_BINLOG_POS"
+      log_both "INFO" "Updated binary log position for $DB: $CURRENT_BINLOG_FILE:$CURRENT_BINLOG_POS" "$LOG_FILE"
+    fi
+  fi
+  
+  SUCCESSFUL_BACKUPS=$((SUCCESSFUL_BACKUPS + 1))
+  log_success "Backup completed for database: $DB"
+done
+
+# Calculate backup duration
+BACKUP_END_TIME=$(date +%s)
+BACKUP_DURATION=$((BACKUP_END_TIME - BACKUP_START_TIME))
+
+# Convert total size to human-readable format
+if [[ $TOTAL_BACKUP_SIZE -gt 1048576 ]]; then
+  SIZE_HR=$(echo "scale=2; $TOTAL_BACKUP_SIZE/1048576" | bc -l 2>/dev/null || echo "$((TOTAL_BACKUP_SIZE/1048576))")
+  SIZE_UNIT="MB"
+elif [[ $TOTAL_BACKUP_SIZE -gt 1024 ]]; then
+  SIZE_HR=$(echo "scale=2; $TOTAL_BACKUP_SIZE/1024" | bc -l 2>/dev/null || echo "$((TOTAL_BACKUP_SIZE/1024))")
+  SIZE_UNIT="KB"
+else
+  SIZE_HR=$TOTAL_BACKUP_SIZE
+  SIZE_UNIT="bytes"
+fi
+
+# Show backup summary
+log_success "Backup process completed!"
+log_both "SUCCESS" "Backup process completed!" "$LOG_FILE"
+
+echo
+log_info "=== BACKUP SUMMARY ==="
+log_info "Backup mode: $BACKUP_MODE"
+log_info "Timestamp: $TIMESTAMP"
+log_info "Duration: ${BACKUP_DURATION}s"
+log_info "Total databases processed: $TOTAL_DATABASES"
+log_info "Successful backups: $SUCCESSFUL_BACKUPS"
+log_info "Failed backups: $FAILED_BACKUPS"
+log_info "Skipped databases: $SKIPPED_DATABASES"
+log_info "Total backup size: $SIZE_HR $SIZE_UNIT"
+log_info "Compression: $([ "$COMPRESS_BACKUPS" == "true" ] && echo "enabled" || echo "disabled")"
+log_info "Encryption: enabled"
+log_info "Checksums: $([ "$CREATE_CHECKSUMS" == "true" ] && echo "enabled" || echo "disabled")"
+
+# Log summary to file
+log_both "INFO" "=== BACKUP SUMMARY ===" "$LOG_FILE"
+log_both "INFO" "Mode: $BACKUP_MODE, Duration: ${BACKUP_DURATION}s" "$LOG_FILE"
+log_both "INFO" "Processed: $TOTAL_DATABASES, Success: $SUCCESSFUL_BACKUPS, Failed: $FAILED_BACKUPS, Skipped: $SKIPPED_DATABASES" "$LOG_FILE"
+log_both "INFO" "Total size: $SIZE_HR $SIZE_UNIT" "$LOG_FILE"
+
+if [[ $FAILED_BACKUPS -gt 0 ]]; then
+  log_error "$FAILED_BACKUPS backup(s) failed. Check the logs for details."
+  log_both "ERROR" "$FAILED_BACKUPS backup(s) failed" "$LOG_FILE"
+  exit 1
+fi
+
+log_info "All backups completed successfully!"
+log_info "Backup files are encrypted and stored in: $BACKUP_DIR"
+log_both "INFO" "Backup process finished at $(date '+%Y-%m-%d %H:%M:%S')" "$LOG_FILE"
