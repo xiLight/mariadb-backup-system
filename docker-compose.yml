@@ -25,6 +25,7 @@ services:
       - ./backups/binlogs:/var/lib/mysql/binlogs
       - ./my_custom.cnf:/etc/mysql/conf.d/my_custom.cnf:ro
       - ./entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+      - ./lib:/usr/local/lib:ro
     entrypoint: ["/usr/local/bin/entrypoint.sh"]
     ports:
       - "3306:3306"
