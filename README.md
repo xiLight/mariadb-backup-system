@@ -29,19 +29,17 @@ chmod +x *.sh
 
 ### 1.1. Installer (Recommended)
 ```bash
-# Install Docker (as root if needed)
-./install-docker.sh --allow-root
-
 # Edit environment configuration
-cp .env.example .env
-nano .env  # Or use your preferred editor
+nano .env.example
 
 # Quick installation with automatic setup
 make install
-# OR manually:
+# or
 ./install.sh
 
 # Verify installation
+make health
+# or
 ./health_check.sh
 ```
 
@@ -554,27 +552,6 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guid
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
-
-## Changelog
-
-### Version 1.1.0 (Current)
-- **Enhanced Restore System**: Interactive database and backup selection
-- **Improved Binary Log Processing**: Fixed mariadb-binlog path issues
-- **Point-in-Time Recovery**: Enhanced timestamp-based restoration
-- **Centralized Logging**: All scripts now use lib/logging.sh
-- **Better Error Handling**: Improved error codes and debugging
-- **Docker Installation**: Added install-docker.sh script
-- **Health Monitoring**: Enhanced health_check.sh with backup testing
-- **File Filtering**: Improved binary log file filtering (.index, .idx exclusion)
-
-### Version 1.0.0
-- Initial release
-- Full and incremental backup support
-- Automatic encryption
-- Binary log management
-- Docker Compose setup
-- Comprehensive logging
-- Health monitoring
 
 ## Acknowledgments
 
