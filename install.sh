@@ -35,19 +35,39 @@ check_prerequisites() {
     # Check Docker
     if ! command -v docker &> /dev/null; then
         log_error "Docker is not installed. Please install Docker first."
-        echo "Visit: https://docs.docker.com/get-docker/"
-        exit 1
+        
+        # Check if install-docker.sh exists
+        if [ ! -f "./install-docker.sh" ]; then
+            log_error "install-docker.sh script not found. Please install Docker manually."
+            echo "Visit: https://docs.docker.com/get-docker/"
+            exit 1
+        fi
+        
+        # Execute the Docker installation script
+        chmod +x ./install-docker.sh
+        ./install-docker.sh
+        
+        # Verify Docker was installed successfully
+        if ! command -v docker &> /dev/null; then
+            log_error "Docker installation failed. You may need to restart your shell or system."
+            log_info "Please install Docker manually and then run this script again."
+            echo "Visit: https://docs.docker.com/get-docker/"
+            exit 1
+        fi
+        
+        log_success "Docker installation completed successfully!"
+
     fi
     log_success "Docker found: $(docker --version)"
     
     # Check Docker Compose
-    if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+    if ! command -v docker compose &> /dev/null && ! docker compose version &> /dev/null; then
         log_error "Docker Compose is not installed. Please install Docker Compose first."
         echo "Visit: https://docs.docker.com/compose/install/"
         exit 1
     fi
     
-    if command -v docker-compose &> /dev/null; then
+    if command -v docker compose &> /dev/null; then
         log_success "Docker Compose found: $(docker-compose --version)"
     else
         log_success "Docker Compose found: $(docker compose version)"
@@ -294,12 +314,11 @@ main() {
         check_logging_system
     else
         # If logging.sh doesn't exist, we need to create it or the script will fail
-        echo "Warning: lib/logging.sh not found. Please ensure it exists before running install.sh"
+        log_warning "lib/logging.sh not found. Please ensure it exists before running install.sh"
         exit 1
     fi
-    
+
     print_banner
-    
     check_root
     check_prerequisites
     setup_environment
