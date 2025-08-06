@@ -24,7 +24,6 @@ function handle_error {
   local exit_code=$1
   local error_msg=$2
   log_error "$error_msg (exit code: $exit_code)"
-  log_both "ERROR" "$error_msg (exit code: $exit_code)" "$LOG_FILE"
   exit $exit_code
 }
 
@@ -81,11 +80,9 @@ fi
 # Create key if it doesn't exist and we're encrypting
 if [[ ! -f "$KEY_FILE" && "$ACTION" == "encrypt" ]]; then
   log_info "Generating new encryption key..."
-  log_both "INFO" "Generating new encryption key..." "$LOG_FILE"
   openssl rand -base64 32 > "$KEY_FILE"
   chmod 600 "$KEY_FILE"
   log_warning "Encryption key generated and saved to $KEY_FILE. KEEP THIS SAFE!"
-  log_both "WARNING" "Encryption key generated and saved to $KEY_FILE. KEEP THIS SAFE!" "$LOG_FILE"
 fi
 
 # Check if key file exists
@@ -97,7 +94,6 @@ fi
 if [[ "$ACTION" == "encrypt" ]]; then
   OUTPUT_FILE="${FILE}.enc"
   log_info "Encrypting file: $FILE -> $OUTPUT_FILE"
-  log_both "INFO" "Encrypting file: $FILE -> $OUTPUT_FILE" "$LOG_FILE"
   
   openssl enc -aes-256-cbc -salt -pbkdf2 -in "$FILE" -out "$OUTPUT_FILE" -pass file:"$KEY_FILE" || 
     handle_error 6 "Encryption failed"
@@ -110,9 +106,7 @@ if [[ "$ACTION" == "encrypt" ]]; then
   fi
   
   log_success "Encryption completed successfully"
-  log_both "SUCCESS" "Encryption completed successfully" "$LOG_FILE"
   log_info "Checksum saved to ${OUTPUT_FILE}.sha256"
-  log_both "INFO" "Checksum saved to ${OUTPUT_FILE}.sha256" "$LOG_FILE"
   
 elif [[ "$ACTION" == "decrypt" ]]; then
   # Determine output file name by removing .enc extension
@@ -123,13 +117,11 @@ elif [[ "$ACTION" == "decrypt" ]]; then
   fi
   
   log_info "Decrypting file: $FILE -> $OUTPUT_FILE"
-  log_both "INFO" "Decrypting file: $FILE -> $OUTPUT_FILE" "$LOG_FILE"
   
   # Verify checksum if exists
   CHECKSUM_FILE="${FILE}.sha256"
   if [[ -f "$CHECKSUM_FILE" ]]; then
     log_info "Verifying checksum before decryption..."
-    log_both "INFO" "Verifying checksum before decryption..." "$LOG_FILE"
     
     if command -v sha256sum &> /dev/null; then
       if ! sha256sum -c "$CHECKSUM_FILE"; then
@@ -144,14 +136,12 @@ elif [[ "$ACTION" == "decrypt" ]]; then
     fi
     
     log_success "Checksum verified successfully"
-    log_both "SUCCESS" "Checksum verified successfully" "$LOG_FILE"
   fi
   
   openssl enc -aes-256-cbc -d -pbkdf2 -in "$FILE" -out "$OUTPUT_FILE" -pass file:"$KEY_FILE" ||
     handle_error 9 "Decryption failed. Is the key correct?"
     
   log_success "Decryption completed successfully"
-  log_both "SUCCESS" "Decryption completed successfully" "$LOG_FILE"
 fi
 
 exit 0
