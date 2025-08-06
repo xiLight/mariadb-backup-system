@@ -18,7 +18,7 @@ BINLOG_DIR="$BACKUP_DIR/binlogs"
 BINLOG_INFO_DIR="$BACKUP_DIR/binlog_info"
 INCR_INFO_DIR="$BACKUP_DIR/incr"
 LOG_FILE="./logs/cleanup_binlogs.log"
-KEEP_GENERATIONS=2
+KEEP_GENERATIONS=7
 
 # Create logs directory if it doesn't exist
 mkdir -p "./logs"
