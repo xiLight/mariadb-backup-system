@@ -93,10 +93,54 @@ select_backup_interactive() {
   for i in "${!FULLS[@]}"; do
     local backup_file="${FULLS[$i]}"
     local backup_size=$(stat -c%s "$backup_file" 2>/dev/null || stat -f%z "$backup_file" 2>/dev/null || echo "unknown")
-    local backup_date=$(stat -c%y "$backup_file" 2>/dev/null || stat -f%Sm "$backup_file" 2>/dev/null || echo "unknown")
+    local backup_date=$(stat -c%Y "$backup_file" 2>/dev/null || stat -f%m "$backup_file" 2>/dev/null || echo "unknown")
     local backup_timestamp=$(basename "$backup_file" | sed -E "s/^${DB}_full_(.*)\.sql\.gz\.enc$/\1/")
     local formatted_timestamp=$(echo "$backup_timestamp" | sed 's/_/ /g' | sed 's/-/:/g')
-    echo "  [$((i+1))] $formatted_timestamp (${backup_size} bytes, $backup_date)" >&2
+   
+   
+    # Convert total size to human readable format
+    if [[ $backup_size -gt 0 ]]; then
+      if [[ $backup_size -gt 1048576 ]]; then
+        SIZE_HR=$(echo "scale=2; $backup_size/1048576" | bc -l 2>/dev/null || echo "$((backup_size/1048576))")
+        SIZE_UNIT="MB"
+      elif [[ $backup_size -gt 1024 ]]; then
+        SIZE_HR=$(echo "scale=2; $backup_size/1024" | bc -l 2>/dev/null || echo "$((backup_size/1024))")
+        SIZE_UNIT="KB"
+      else
+        SIZE_HR=$backup_size
+        SIZE_UNIT="bytes"
+      fi
+    else
+      SIZE_HR="0"
+      SIZE_UNIT="bytes"
+    fi
+
+      # Calculate "x days/hours/minutes ago"
+      if [[ "$backup_date" != "unknown" ]]; then
+        current_time=$(date +%s)
+        age_seconds=$((current_time - backup_date))
+
+        if (( age_seconds >= 86400 )); then
+          age=$((age_seconds / 86400))
+          age_text="${age} day(s) ago"
+        elif (( age_seconds >= 3600 )); then
+          age=$((age_seconds / 3600))
+          age_text="${age} hour(s) ago"
+        elif (( age_seconds >= 60 )); then
+          age=$((age_seconds / 60))
+          age_text="${age} minute(s) ago"
+        else
+          age="${age_seconds}"
+          age_text="${age} second(s) ago"
+        fi
+      else
+        age_text="Unknown Date"
+      fi
+
+      local base_name=$(basename "$backup_file")
+      local short_name=$(echo "$base_name" | sed -E 's/_[0-9]{8}_[0-9]{6}//')
+
+    echo "[$((i+1))] $short_name (${SIZE_HR} ${SIZE_UNIT}, $age_text)" >&2
   done
   
   echo "" >&2
@@ -414,17 +458,6 @@ elif [[ $TOTAL_BACKUP_SIZE -gt 1024 ]]; then
 else
   BACKUP_SIZE_HR=$TOTAL_BACKUP_SIZE
   BACKUP_SIZE_UNIT="bytes"
-fi
-
-if [[ $TOTAL_BINLOG_SIZE -gt 1048576 ]]; then
-  BINLOG_SIZE_HR=$(echo "scale=2; $TOTAL_BINLOG_SIZE/1048576" | bc -l 2>/dev/null || echo "$((TOTAL_BINLOG_SIZE/1048576))")
-  BINLOG_SIZE_UNIT="MB"
-elif [[ $TOTAL_BINLOG_SIZE -gt 1024 ]]; then
-  BINLOG_SIZE_HR=$(echo "scale=2; $TOTAL_BINLOG_SIZE/1024" | bc -l 2>/dev/null || echo "$((TOTAL_BINLOG_SIZE/1024))")
-  BINLOG_SIZE_UNIT="KB"
-else
-  BINLOG_SIZE_HR=$TOTAL_BINLOG_SIZE
-  BINLOG_SIZE_UNIT="bytes"
 fi
 
 # Show restore summary
