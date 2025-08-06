@@ -178,7 +178,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 log_info "Starting restore process at $RESTORE_START_DATE"
-log_both "INFO" "Starting restore process at $RESTORE_START_DATE" "$LOG_FILE"
 
 # Load environment variables
 if [[ -f ".env" ]]; then
@@ -259,7 +258,6 @@ for DB_TO_RESTORE in "${DBS_TO_RESTORE[@]}"; do
 
   log_info "--- Processing database: $DB_TO_RESTORE ---"
   log_info "Selected backup: $CURRENT_BACKUP_FILE"
-  log_both "INFO" "Selected database: $DB_TO_RESTORE, backup: $CURRENT_BACKUP_FILE" "$LOG_FILE"
 
   # Extract timestamp from backup filename
   BACKUP_TIMESTAMP=$(basename "$CURRENT_BACKUP_FILE" | sed "s/${DB_TO_RESTORE}_full_\(.*\)\.sql\.gz\.enc/\1/")
@@ -270,8 +268,7 @@ for DB_TO_RESTORE in "${DBS_TO_RESTORE[@]}"; do
   TOTAL_BACKUP_SIZE=$((TOTAL_BACKUP_SIZE + BACKUP_SIZE))
 
   log_info "Starting restore process..."
-  log_both "INFO" "Starting restore process for $DB_TO_RESTORE from $BACKUP_TIMESTAMP" "$LOG_FILE"
-
+  
   # Step 1: Decrypt and restore the full backup
   log_info "Step 1: Decrypting and restoring full backup..."
 
@@ -332,7 +329,6 @@ for DB_TO_RESTORE in "${DBS_TO_RESTORE[@]}"; do
   if [[ -f "$BINLOG_INFO_FILE" ]]; then
     read BINLOG_FILE BINLOG_POS < "$BINLOG_INFO_FILE"
     log_info "Starting from binlog: $BINLOG_FILE at position $BINLOG_POS"
-    log_both "INFO" "Applying binlogs from $BINLOG_FILE:$BINLOG_POS" "$LOG_FILE"
     
     # Find all binlog files from the backup point onwards
     BINLOG_FILES=()
@@ -433,7 +429,6 @@ fi
 
 # Show restore summary
 log_success "Restore completed successfully!"
-log_both "SUCCESS" "Restore completed successfully!" "$LOG_FILE"
 
 echo
 log_info "=== RESTORE SUMMARY ==="
