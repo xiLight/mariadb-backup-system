@@ -1,0 +1,9 @@
+# Shell scripts and configs must keep LF line endings to run in Linux/Docker
+*.sh text eol=lf
+*.cnf text eol=lf
+*.template text eol=lf
+*.cfg text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Makefile text eol=lf
+.env.example text eol=lf

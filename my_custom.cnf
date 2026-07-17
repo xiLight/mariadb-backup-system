@@ -10,7 +10,7 @@ max_allowed_packet = 64M
 thread_cache_size = 128
 
 # InnoDB settings
-innodb_buffer_pool_size = 1028M
+innodb_buffer_pool_size = 1024M
 innodb_buffer_pool_instances = 4
 innodb_log_file_size = 128M
 innodb_log_buffer_size = 64M
@@ -39,10 +39,8 @@ gtid_strict_mode = OFF  # Allow both GTID and non-GTID transactions for compatib
 gtid_domain_id = 1
 log_slave_updates = ON
 
-# Additional binlog settings for restore compatibility
-binlog_do_db = ""  # Log all databases
-binlog_ignore_db = ""  # Don't ignore any databases
-sql_mode = ""  # Relaxed SQL mode for better compatibility
+# Relaxed SQL mode for better restore compatibility
+sql_mode = ""
 
 # Performance
 join_buffer_size = 4M

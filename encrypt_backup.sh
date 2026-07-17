@@ -1,38 +1,30 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 
-# Load logging functions
-source "./lib/logging.sh"
-
-# Encryption script for MariaDB backups
-# This script encrypts backup files using OpenSSL
-# Usage: ./encrypt_backup.sh [--encrypt|--decrypt] [file] [--key keyfile]
-
 set -e
 
-# Set default values
+source "./lib/logging.sh"
+
+LOG_FILE="./logs/encrypt.log"
+init_logging
+
 ACTION=""
 FILE=""
 KEY_FILE=".backup_encryption_key"
-LOG_FILE="./logs/encrypt.log"
+CHECKSUM_DIR="./backups/checksums"
+CREATE_CHECKSUM=true
 
-# Create logs directory if it doesn't exist
-mkdir -p "./logs"
-
-# Error handling function
-function handle_error {
+handle_error() {
   local exit_code=$1
-  local error_msg=$2
-  log_error "$error_msg (exit code: $exit_code)"
-  exit $exit_code
+  shift
+  log_error "$* (exit code: $exit_code)"
+  exit "$exit_code"
 }
 
-# Check if openssl is installed
 if ! command -v openssl &> /dev/null; then
   handle_error 1 "OpenSSL is not installed. Please install it and try again."
 fi
 
-# Parse arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
     --encrypt)
@@ -47,12 +39,22 @@ while [[ $# -gt 0 ]]; do
       KEY_FILE="$2"
       shift 2
       ;;
+    --checksum-dir)
+      CHECKSUM_DIR="$2"
+      shift 2
+      ;;
+    --no-checksum)
+      CREATE_CHECKSUM=false
+      shift
+      ;;
     --help)
-      echo "Usage: ./encrypt_backup.sh [--encrypt|--decrypt] [file] [--key keyfile]"
-      echo "  --encrypt: Encrypt the specified file"
-      echo "  --decrypt: Decrypt the specified file"
-      echo "  --key: Specify a key file (default: .backup_encryption_key)"
-      echo "  --help: Show this help message"
+      echo "Usage: ./encrypt_backup.sh [--encrypt|--decrypt] FILE [OPTIONS]"
+      echo "  --encrypt            Encrypt the specified file (creates FILE.enc)"
+      echo "  --decrypt            Decrypt the specified file"
+      echo "  --key FILE           Key file (default: .backup_encryption_key)"
+      echo "  --checksum-dir DIR   Checksum directory (default: ./backups/checksums)"
+      echo "  --no-checksum        Skip checksum creation on encrypt"
+      echo "  --help               Show this help message"
       exit 0
       ;;
     *)
@@ -62,22 +64,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Check if action is specified
-if [[ -z "$ACTION" ]]; then
-  handle_error 2 "No action specified. Use --encrypt or --decrypt"
-fi
+[[ -z "$ACTION" ]] && handle_error 2 "No action specified. Use --encrypt or --decrypt"
+[[ -z "$FILE" ]] && handle_error 3 "No file specified"
+[[ ! -f "$FILE" ]] && handle_error 4 "File '$FILE' not found"
 
-# Check if file is specified
-if [[ -z "$FILE" ]]; then
-  handle_error 3 "No file specified"
-fi
-
-# Check if file exists
-if [[ ! -f "$FILE" ]]; then
-  handle_error 4 "File '$FILE' not found"
-fi
-
-# Create key if it doesn't exist and we're encrypting
 if [[ ! -f "$KEY_FILE" && "$ACTION" == "encrypt" ]]; then
   log_info "Generating new encryption key..."
   openssl rand -base64 32 > "$KEY_FILE"
@@ -85,62 +75,70 @@ if [[ ! -f "$KEY_FILE" && "$ACTION" == "encrypt" ]]; then
   log_warning "Encryption key generated and saved to $KEY_FILE. KEEP THIS SAFE!"
 fi
 
-# Check if key file exists
-if [[ ! -f "$KEY_FILE" ]]; then
-  handle_error 5 "Key file '$KEY_FILE' not found"
-fi
+[[ ! -f "$KEY_FILE" ]] && handle_error 5 "Key file '$KEY_FILE' not found"
 
-# Perform encryption/decryption
+write_checksum() {
+  local target="$1" checksum_file="$2"
+  if command -v sha256sum &> /dev/null; then
+    sha256sum "$target" > "$checksum_file"
+  else
+    echo "$(openssl dgst -sha256 "$target" | awk '{print $NF}')  $target" > "$checksum_file"
+  fi
+}
+
+verify_checksum() {
+  local target="$1" checksum_file="$2"
+  if command -v sha256sum &> /dev/null; then
+    sha256sum -c "$checksum_file" >/dev/null 2>&1
+  else
+    local expected actual
+    expected=$(awk '{print $1}' "$checksum_file")
+    actual=$(openssl dgst -sha256 "$target" | awk '{print $NF}')
+    [[ "$expected" == "$actual" ]]
+  fi
+}
+
 if [[ "$ACTION" == "encrypt" ]]; then
   OUTPUT_FILE="${FILE}.enc"
-  log_info "Encrypting file: $FILE -> $OUTPUT_FILE"
-  
-  openssl enc -aes-256-cbc -salt -pbkdf2 -in "$FILE" -out "$OUTPUT_FILE" -pass file:"$KEY_FILE" || 
+  log_info "Encrypting: $FILE -> $OUTPUT_FILE"
+
+  openssl enc -aes-256-cbc -salt -pbkdf2 -in "$FILE" -out "$OUTPUT_FILE" -pass file:"$KEY_FILE" ||
     handle_error 6 "Encryption failed"
-  
-  # Generate checksum of encrypted file
-  if command -v sha256sum &> /dev/null; then
-    sha256sum "$OUTPUT_FILE" > "${OUTPUT_FILE}.sha256"
-  else
-    openssl dgst -sha256 "$OUTPUT_FILE" | sed 's/^.* //' > "${OUTPUT_FILE}.sha256"
+
+  if [[ "$CREATE_CHECKSUM" == "true" ]]; then
+    mkdir -p "$CHECKSUM_DIR"
+    CHECKSUM_FILE="$CHECKSUM_DIR/$(basename "$OUTPUT_FILE").sha256"
+    write_checksum "$OUTPUT_FILE" "$CHECKSUM_FILE"
+    log_info "Checksum saved: $CHECKSUM_FILE"
   fi
-  
+
   log_success "Encryption completed successfully"
-  log_info "Checksum saved to ${OUTPUT_FILE}.sha256"
-  
+
 elif [[ "$ACTION" == "decrypt" ]]; then
-  # Determine output file name by removing .enc extension
   if [[ "$FILE" == *.enc ]]; then
     OUTPUT_FILE="${FILE%.enc}"
   else
     OUTPUT_FILE="${FILE}.decrypted"
   fi
-  
-  log_info "Decrypting file: $FILE -> $OUTPUT_FILE"
-  
-  # Verify checksum if exists
-  CHECKSUM_FILE="${FILE}.sha256"
+
+  log_info "Decrypting: $FILE -> $OUTPUT_FILE"
+
+  # Verify integrity first if a checksum exists (new location, then legacy)
+  CHECKSUM_FILE="$CHECKSUM_DIR/$(basename "$FILE").sha256"
+  [[ ! -f "$CHECKSUM_FILE" ]] && CHECKSUM_FILE="${FILE}.sha256"
+
   if [[ -f "$CHECKSUM_FILE" ]]; then
     log_info "Verifying checksum before decryption..."
-    
-    if command -v sha256sum &> /dev/null; then
-      if ! sha256sum -c "$CHECKSUM_FILE"; then
-        handle_error 7 "Checksum verification failed! File may be corrupted."
-      fi
+    if verify_checksum "$FILE" "$CHECKSUM_FILE"; then
+      log_success "Checksum verified successfully"
     else
-      EXPECTED=$(cat "$CHECKSUM_FILE")
-      ACTUAL=$(openssl dgst -sha256 "$FILE" | sed 's/^.* //')
-      if [[ "$EXPECTED" != "$ACTUAL" ]]; then
-        handle_error 8 "Checksum verification failed! File may be corrupted."
-      fi
+      handle_error 7 "Checksum verification failed! File may be corrupted."
     fi
-    
-    log_success "Checksum verified successfully"
   fi
-  
+
   openssl enc -aes-256-cbc -d -pbkdf2 -in "$FILE" -out "$OUTPUT_FILE" -pass file:"$KEY_FILE" ||
     handle_error 9 "Decryption failed. Is the key correct?"
-    
+
   log_success "Decryption completed successfully"
 fi
 

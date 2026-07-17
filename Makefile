@@ -1,6 +1,6 @@
 # MariaDB Backup System Makefile
 
-.PHONY: help install env start stop restart status backup backup-full backup-incremental restore cleanup health logs clean build
+.PHONY: help install env start stop restart status backup backup-full backup-incremental restore verify cleanup health logs clean build
 
 # Default target
 help:
@@ -19,6 +19,8 @@ help:
 	@echo "  make backup           - Create incremental backup"
 	@echo "  make backup-full      - Create full backup"
 	@echo "  make backup-empty     - Create full backup including empty DBs"
+	@echo "  make verify           - Verify integrity of all backups"
+	@echo "  make verify-latest    - Verify latest backup per database"
 	@echo ""
 	@echo "Maintenance:"
 	@echo "  make cleanup          - Clean old backups and logs"
@@ -29,6 +31,15 @@ help:
 	@echo "  make logs             - Show MariaDB logs"
 	@echo "  make logs-backup      - Show backup logs"
 	@echo "  make logs-follow      - Follow MariaDB logs"
+	@echo ""
+	@echo "Galera Cluster (HA):"
+	@echo "  make cluster-init     - First-time 3-node cluster setup"
+	@echo "  make cluster-start    - Start the cluster"
+	@echo "  make cluster-stop     - Stop the cluster"
+	@echo "  make cluster-status   - Show cluster health"
+	@echo "  make update           - Rolling update (git pull + node-by-node restart)"
+	@echo "  make heal             - Run one self-healing check"
+	@echo "  make heal-daemon      - Run self-healing continuously"
 	@echo ""
 	@echo "Development:"
 	@echo "  make env              - Create .env file with generated passwords"
@@ -99,7 +110,7 @@ status:
 	@docker-compose ps
 	@echo ""
 	@echo "MariaDB Status:"
-	@docker exec mariadb mariadb -u root -p$(shell grep MARIADB_ROOT_PASSWORD .env | cut -d= -f2) -e "SHOW STATUS LIKE 'Uptime%';" 2>/dev/null || echo "Cannot connect to MariaDB"
+	@docker exec -e MYSQL_PWD=$(shell grep MARIADB_ROOT_PASSWORD .env | cut -d= -f2) mariadb mariadb -u root -e "SHOW STATUS LIKE 'Uptime%';" 2>/dev/null || echo "Cannot connect to MariaDB"
 
 build:
 	@echo "Building MariaDB container..."
@@ -123,6 +134,37 @@ restore:
 	@echo "Starting restore process..."
 	@./restore.sh
 
+# Galera cluster operations
+cluster-init:
+	@./cluster.sh init
+
+cluster-start:
+	@./cluster.sh start
+
+cluster-stop:
+	@./cluster.sh stop
+
+cluster-status:
+	@./cluster.sh status
+
+update:
+	@./update.sh
+
+heal:
+	@./heal.sh
+
+heal-daemon:
+	@./heal.sh --daemon
+
+# Verify operations
+verify:
+	@echo "Verifying all backups..."
+	@./verify_backup.sh
+
+verify-latest:
+	@echo "Verifying latest backups..."
+	@./verify_backup.sh --latest
+
 # Cleanup operations
 cleanup: cleanup-backups cleanup-logs
 
@@ -131,8 +173,12 @@ cleanup-backups:
 	@./cleanup_backups.sh
 
 cleanup-logs:
-	@echo "Cleaning old logs..."
+	@echo "Rotating and pruning logs..."
 	@./log_cleanup.sh
+
+cleanup-logs-all:
+	@echo "Truncating all logs..."
+	@./log_cleanup.sh --all
 
 # Health and monitoring
 health:
@@ -183,7 +229,7 @@ config:
 mysql: mariadb
 mariadb:
 	@echo "Connecting to MariaDB..."
-	@docker exec -it mariadb mariadb -u root -p$(shell grep MARIADB_ROOT_PASSWORD .env | cut -d= -f2)
+	@docker exec -it -e MYSQL_PWD=$(shell grep MARIADB_ROOT_PASSWORD .env | cut -d= -f2) mariadb mariadb -u root
 
 # Show disk usage
 disk-usage:

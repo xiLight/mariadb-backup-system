@@ -1,53 +1,59 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 
-# Load logging functions
 source "./lib/logging.sh"
 
-log_info "Starting log cleanup process..."
+# Log maintenance for the rolling log system:
+#   default : rotate oversized logs and delete rotated files older than LOG_RETENTION_DAYS
+#   --all   : additionally truncate all current log files
+LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-14}"
+TRUNCATE_ALL=false
 
-# Create logs directory if it doesn't exist
+case "$1" in
+  --all)
+    TRUNCATE_ALL=true
+    ;;
+  --help)
+    echo "Usage: $0 [--all]"
+    echo "  (no option)  Rotate oversized logs, delete rotated logs older than $LOG_RETENTION_DAYS days"
+    echo "  --all        Also truncate all current log files"
+    exit 0
+    ;;
+esac
+
 mkdir -p "./logs"
 
-# Define log files to clean
-LOG_FILES=(
-  "logs/backup.log"
-  "logs/cleanup_backups.log"
-  "logs/cleanup_binlogs.log"
-  "logs/cleanup.log"
-  "logs/encrypt.log"
-  "logs/restore.log"
-)
+log_info "Starting log maintenance (retention: $LOG_RETENTION_DAYS days, max size: ${LOG_MAX_SIZE_KB} KB)"
 
-# Count how many files will be cleaned
-CLEANED_COUNT=0
-SKIPPED_COUNT=0
+ROTATED_COUNT=0
+DELETED_COUNT=0
+TRUNCATED_COUNT=0
 
-for LOG_FILE in "${LOG_FILES[@]}"; do
-  if [[ -f "$LOG_FILE" ]]; then
-    # Get file size before cleanup
-    if [[ -s "$LOG_FILE" ]]; then
-      SIZE_BEFORE=$(stat -c%s "$LOG_FILE" 2>/dev/null || stat -f%z "$LOG_FILE" 2>/dev/null || echo "0")
-      
-      # Clear the log file
-      > "$LOG_FILE"
-      
-      log_success "Cleared $LOG_FILE (was ${SIZE_BEFORE} bytes)"
-      CLEANED_COUNT=$((CLEANED_COUNT + 1))
-    else
-      log_info "Skipped $LOG_FILE (already empty)"
-      SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+for CURRENT_LOG in ./logs/*.log; do
+  [[ -f "$CURRENT_LOG" ]] || continue
+
+  if [[ "$TRUNCATE_ALL" == "true" ]]; then
+    if [[ -s "$CURRENT_LOG" ]]; then
+      SIZE_BEFORE=$(stat -c%s "$CURRENT_LOG" 2>/dev/null || stat -f%z "$CURRENT_LOG" 2>/dev/null || echo "0")
+      : > "$CURRENT_LOG"
+      log_success "Truncated $CURRENT_LOG (was ${SIZE_BEFORE} bytes)"
+      TRUNCATED_COUNT=$((TRUNCATED_COUNT + 1))
     fi
   else
-    log_warning "Log file $LOG_FILE not found - creating empty file"
-    touch "$LOG_FILE"
-    CLEANED_COUNT=$((CLEANED_COUNT + 1))
+    SIZE_KB=$(( $(stat -c%s "$CURRENT_LOG" 2>/dev/null || stat -f%z "$CURRENT_LOG" 2>/dev/null || echo 0) / 1024 ))
+    if (( SIZE_KB >= LOG_MAX_SIZE_KB )); then
+      rotate_log "$CURRENT_LOG"
+      log_success "Rotated $CURRENT_LOG (was ${SIZE_KB} KB)"
+      ROTATED_COUNT=$((ROTATED_COUNT + 1))
+    fi
   fi
 done
 
-log_info "Log cleanup completed!"
-log_success "Files cleaned: $CLEANED_COUNT"
-log_info "Files skipped (already empty): $SKIPPED_COUNT"
+# Delete rotated logs (*.log.1, *.log.2, ...) older than the retention period
+while IFS= read -r OLD_LOG; do
+  rm -f "$OLD_LOG"
+  log_info "Deleted old rotated log: $OLD_LOG"
+  DELETED_COUNT=$((DELETED_COUNT + 1))
+done < <(find ./logs -type f -name "*.log.[0-9]*" -mtime "+$LOG_RETENTION_DAYS" 2>/dev/null)
 
-# Show disk space freed (optional)
-log_info "Log files are now ready for new entries."
+log_success "Log maintenance completed (rotated: $ROTATED_COUNT, deleted: $DELETED_COUNT, truncated: $TRUNCATED_COUNT)"

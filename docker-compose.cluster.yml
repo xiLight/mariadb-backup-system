@@ -1,0 +1,123 @@
+x-node-common: &node-common
+  image: mariadb-galera:local
+  restart: unless-stopped
+  networks:
+    - galera
+    - web
+  healthcheck:
+    test: ["CMD", "mariadb-admin", "ping", "-h", "localhost"]
+    interval: 15s
+    timeout: 10s
+    start_period: 120s
+    retries: 3
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-node-env: &node-env
+  MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+  MARIADB_DATABASE1: ${MARIADB_DATABASE1}
+  MARIADB_DATABASE2: ${MARIADB_DATABASE2}
+  MARIADB_DATABASE3: ${MARIADB_DATABASE3}
+  MARIADB_DATABASE4: ${MARIADB_DATABASE4}
+  MARIADB_DATABASE5: ${MARIADB_DATABASE5}
+  MARIADB_USER: ${MARIADB_USER}
+  MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+  DATABASE1_PASSWORD: ${DATABASE1_PASSWORD}
+  DATABASE2_PASSWORD: ${DATABASE2_PASSWORD}
+  DATABASE3_PASSWORD: ${DATABASE3_PASSWORD}
+  DATABASE4_PASSWORD: ${DATABASE4_PASSWORD}
+  DATABASE5_PASSWORD: ${DATABASE5_PASSWORD}
+  TZ: ${TZ:-Europe/Berlin}
+  GALERA_ENABLED: "yes"
+  GALERA_CLUSTER_NAME: ${GALERA_CLUSTER_NAME:-mariadb-galera}
+  GALERA_CLUSTER_ADDRESS: gcomm://mariadb-node1,mariadb-node2,mariadb-node3
+
+services:
+  mariadb-node1:
+    <<: *node-common
+    build:
+      context: .
+      dockerfile: Dockerfile.mariadb
+    container_name: mariadb-node1
+    environment:
+      <<: *node-env
+      GALERA_NODE_ID: "1"
+      GALERA_NODE_NAME: node1
+      GALERA_NODE_ADDRESS: mariadb-node1
+    volumes:
+      - ./cluster_data/node1:/var/lib/mysql
+      - ./my_custom.cnf:/etc/mysql/conf.d/my_custom.cnf:ro
+      - ./galera.cnf.template:/etc/mysql/galera.cnf.template:ro
+      - ./entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+      - ./lib:/usr/local/lib:ro
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
+
+  mariadb-node2:
+    <<: *node-common
+    container_name: mariadb-node2
+    depends_on:
+      - mariadb-node1
+    environment:
+      <<: *node-env
+      GALERA_NODE_ID: "2"
+      GALERA_NODE_NAME: node2
+      GALERA_NODE_ADDRESS: mariadb-node2
+    volumes:
+      - ./cluster_data/node2:/var/lib/mysql
+      - ./my_custom.cnf:/etc/mysql/conf.d/my_custom.cnf:ro
+      - ./galera.cnf.template:/etc/mysql/galera.cnf.template:ro
+      - ./entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+      - ./lib:/usr/local/lib:ro
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
+
+  mariadb-node3:
+    <<: *node-common
+    container_name: mariadb-node3
+    depends_on:
+      - mariadb-node1
+    environment:
+      <<: *node-env
+      GALERA_NODE_ID: "3"
+      GALERA_NODE_NAME: node3
+      GALERA_NODE_ADDRESS: mariadb-node3
+    volumes:
+      - ./cluster_data/node3:/var/lib/mysql
+      - ./my_custom.cnf:/etc/mysql/conf.d/my_custom.cnf:ro
+      - ./galera.cnf.template:/etc/mysql/galera.cnf.template:ro
+      - ./entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+      - ./lib:/usr/local/lib:ro
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
+
+  haproxy:
+    image: haproxy:2.9-alpine
+    container_name: mariadb-haproxy
+    restart: unless-stopped
+    ports:
+      - "${HAPROXY_PORT:-3306}:3306"
+      - "${HAPROXY_STATS_PORT:-8404}:8404"
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks:
+      - galera
+      - web
+    depends_on:
+      - mariadb-node1
+      - mariadb-node2
+      - mariadb-node3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  galera:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${GALERA_SUBNET:-172.28.66.0/24}
+  web:
+    external: true

@@ -29,19 +29,31 @@ chmod +x *.sh
 
 ### 1.1. Installer (Recommended)
 ```bash
-# Edit environment configuration
-nano .env.example
-
 # Quick installation with automatic setup
 make install
-# or
+# or interactively choose single node vs. HA cluster:
 ./install.sh
+# or non-interactive:
+./install.sh --single     # one MariaDB container
+./install.sh --cluster    # 3-node Galera cluster + HAProxy + self-healing cron
 
 # Verify installation
 make health
 # or
 ./health_check.sh
 ```
+
+The installer does everything - after it finishes, the system is ready to use:
+
+1. **Installs [Portolan](https://git.simbrey.com/docker-public/portolan)** (port/subnet registry)
+   and uses it to pick **collision-free ports and subnets** for `.env`:
+   port 3306 taken? Portolan suggests the next free one. The chosen ports are
+   reserved in Portolan's registry so other stacks won't collide with this one.
+2. Generates secure passwords and the backup encryption key
+3. Creates directories, networks, and starts the containers
+4. Cluster mode: initializes the Galera cluster **and installs the self-healing
+   cron job** (`./heal.sh` every minute) - no manual steps needed
+5. Runs an initial backup test
 
 ### 2. Configure Environment
 
@@ -143,6 +155,10 @@ Deletes backups older than the specified retention period.
 | `MARIADB_CONTAINER` | Container name | `mariadb` | No |
 | `BACKUP_DIR` | Backup storage directory | `./backups` | No |
 | `BINLOG_DIR` | Binary log backup directory | `./backups/binlogs` | No |
+| `BACKUP_KEEP_GENERATIONS` | Full backup generations to keep per DB | `7` | No |
+| `LOG_MAX_SIZE_KB` | Rotate logs when they exceed this size | `5120` | No |
+| `LOG_KEEP` | Number of rotated log files to keep | `5` | No |
+| `LOG_RETENTION_DAYS` | Delete rotated logs older than this | `14` | No |
 | `TZ` | Timezone | `Europe/Berlin` | No |
 
 ### MariaDB Configuration (my_custom.cnf)
@@ -156,18 +172,92 @@ bind-address = 0.0.0.0
 max_connections = 900
 
 # Binary logging for point-in-time recovery
-log_bin = /var/lib/mysql/binlogs/mysql-bin
+log_bin = mysql-bin
 binlog_format = ROW
 expire_logs_days = 30
 
 # Performance optimizations
-innodb_buffer_pool_size = 1028M
+innodb_buffer_pool_size = 1024M
 query_cache_size = 64M
-
-# Security and replication settings
-binlog_do_db = myapp_db,analytics_db
-binlog_ignore_db = mysql,information_schema,performance_schema
 ```
+
+## High Availability: Galera Cluster (3 Nodes)
+
+Optional synchronous multi-master replication with automatic failover and
+self-healing. The single-node setup (`docker-compose.yml`) keeps working
+unchanged - the cluster lives in its own compose file.
+
+```
+                        ┌──────────────┐
+   Clients ──► :3306 ──►│   HAProxy    │  automatic failover
+                        └──┬────┬────┬─┘  (stats: :8404)
+                           │    │    │
+                        ┌──▼─┐┌─▼──┐┌─▼──┐
+                        │node1││node2││node3│   Galera: synchronous
+                        └────┘└────┘└────┘     multi-master replication
+```
+
+- **Synchronous replication**: every commit is replicated to all 3 nodes before it returns
+- **Automatic failover**: HAProxy routes traffic to node1; if it fails, node2/node3 take over within seconds and node1 resumes once healthy
+- **Single-writer routing**: writes go to one node at a time (Galera best practice, avoids certification conflicts)
+
+### Cluster Setup
+
+```bash
+# One-time initialization (bootstraps node1, joins node2+3, starts HAProxy)
+./cluster.sh init          # or: make cluster-init
+
+# Daily operations
+./cluster.sh status        # cluster health overview
+./cluster.sh stop          # graceful shutdown
+./cluster.sh start         # start again (safe cold-start via heal.sh)
+```
+
+Connect your applications to `localhost:3306` (HAProxy) - failover is transparent.
+
+### Rolling Updates (zero downtime)
+
+```bash
+./update.sh                # or: make update
+```
+
+`update.sh` pulls the latest version from git, rebuilds the image, then updates
+**node1 first while node2/3 keep serving**. It waits until node1 is back and
+fully `Synced`, then updates node2, then node3 - exactly one node is ever down.
+The update aborts immediately if the cluster is not fully healthy.
+
+```bash
+./update.sh --skip-pull    # rebuild + roll without git pull
+./update.sh --yes          # non-interactive (for automation)
+```
+
+### Self-Healing
+
+```bash
+./heal.sh                  # one-shot check (ideal for cron)
+./heal.sh --daemon         # continuous monitoring (HEAL_INTERVAL, default 30s)
+./heal.sh --recover        # force full-cluster recovery
+```
+
+What it heals automatically:
+- **Stopped node** → restarted and rejoins the cluster (state transfer via mariabackup)
+- **Stuck node** (not responding / split-brain non-Primary) → restarted after 3 consecutive failed checks
+- **Whole cluster down** → bootstraps from the node with the newest data (`grastate.dat` seqno), then rejoins the others
+- **HAProxy down** → restarted
+
+`./install.sh --cluster` installs this cron job automatically. Manual setup:
+```
+* * * * * cd /path/to/mariadb-backup-system && ./heal.sh >/dev/null 2>&1
+```
+
+### Backups in Cluster Mode
+
+Point the backup system at one node in `.env`:
+```
+MARIADB_CONTAINER=mariadb-node1
+```
+All backup/restore/verify scripts work unchanged. Restores replicate to the
+other nodes automatically (SQL imports go through Galera replication).
 
 ## Key Improvements in Current Version
 
@@ -211,8 +301,24 @@ binlog_ignore_db = mysql,information_schema,performance_schema
 # Incremental backup (binary logs only)
 ./backup.sh --incremental
 
+# Full backup with verification (decrypt + integrity test after creation)
+./backup.sh --full --verify
+
 # Custom encryption key
 ./backup.sh --full --key /path/to/custom.key
+```
+
+#### Verify Commands
+
+```bash
+# Verify all backups (checksum + decryption + gzip integrity)
+./verify_backup.sh
+
+# Verify only the latest backup per database
+./verify_backup.sh --latest
+
+# Verify backups of a specific database
+./verify_backup.sh --database myapp_db
 ```
 
 #### Restore Commands
@@ -230,24 +336,33 @@ binlog_ignore_db = mysql,information_schema,performance_schema
 # Point-in-time recovery to specific timestamp
 ./restore.sh --to-timestamp "YYYY-MM-DD HH:MM:SS"
 
-# Restore with verbose output and debug information
-./restore.sh --verbose --debug
+# Skip the confirmation prompt (for automation/cron)
+./restore.sh --database myapp_db --last --yes
+
+# Restore with verbose output
+./restore.sh --verbose
 
 # Use specific backup file
 ./restore.sh --database myapp_db --backup-file backup_file.sql.gz.enc
 ```
 
+> **Note:** Restoring overwrites the target database. The script asks for
+> confirmation unless `--yes` is passed.
+
 #### Maintenance Commands
 
 ```bash
-# Clean old backups (keeps last 7 days by default)
+# Clean old backups (keeps last BACKUP_KEEP_GENERATIONS full backups per DB, default 7)
 ./cleanup_backups.sh
 
-# Clean old binary logs (keeps last 3 days by default)
+# Clean binary logs no longer needed by any kept backup
 ./cleanup_binlogs.sh
 
-# Clean application logs
+# Rotate oversized logs and prune old rotated logs
 ./log_cleanup.sh
+
+# Truncate all logs
+./log_cleanup.sh --all
 
 # System health check
 ./health_check.sh
@@ -275,6 +390,8 @@ make status
 make backup          # Incremental
 make backup-full     # Full backup
 make backup-empty    # Full with empty DBs
+make verify          # Verify all backups
+make verify-latest   # Verify latest backup per DB
 
 # Maintenance
 make cleanup         # Clean backups and logs
@@ -301,9 +418,10 @@ mariadb-backup-system/
 ├── 🔧 backup.sh               # Main backup script
 ├── 🔧 restore.sh              # Restore script with interactive selection
 ├── 🔧 encrypt_backup.sh       # Encryption utilities
+├── 🔧 verify_backup.sh        # Backup integrity verification
 ├── 🔧 cleanup_backups.sh      # Backup cleanup
 ├── 🔧 cleanup_binlogs.sh      # Binary log cleanup
-├── 🔧 log_cleanup.sh          # Log cleanup
+├── 🔧 log_cleanup.sh          # Log rotation and cleanup
 ├── 📁 lib/                    # Shared libraries
 │   └── logging.sh             # Centralized logging system
 ├── 📁 backups/                # Backup storage
@@ -330,14 +448,14 @@ All log files are organized in the `logs/` directory with centralized logging:
 The project uses a centralized logging system located in `lib/logging.sh` that provides:
 - Consistent timestamp formatting
 - Color-coded log levels (INFO, SUCCESS, WARNING, ERROR, DEBUG)
-- Combined console and file output
-- Customizable log formatting
+- Automatic console and file output (set `LOG_FILE` + call `init_logging`)
+- **Rolling logs**: automatic size-based rotation (`backup.log` → `backup.log.1` → ... ),
+  configurable via `LOG_MAX_SIZE_KB` and `LOG_KEEP` in `.env`
 
 ### Log Management
 
-Clean all log files:
 ```bash
-# Clean application logs
+# Rotate oversized logs, prune rotated logs older than LOG_RETENTION_DAYS
 ./log_cleanup.sh
 
 # View recent backup operations

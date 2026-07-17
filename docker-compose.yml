@@ -27,7 +27,7 @@ services:
       - ./lib:/usr/local/lib:ro
     entrypoint: ["/usr/local/bin/entrypoint.sh"]
     ports:
-      - "3306:3306"
+      - "${MARIADB_PORT:-3306}:3306"
     networks:
       - web
     logging:

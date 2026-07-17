@@ -34,6 +34,37 @@ if [ -z "$MARIADB_ROOT_PASSWORD" ]; then
   handle_error "MARIADB_ROOT_PASSWORD environment variable is not set"
 fi
 
+# --- Galera cluster support ----------------------------------------------
+GALERA_ENABLED="${GALERA_ENABLED:-no}"
+WSREP_NEW_CLUSTER=""
+
+if [ "$GALERA_ENABLED" = "yes" ]; then
+  log_info "Galera mode enabled (node: ${GALERA_NODE_NAME:-unknown})"
+
+  # Render the per-node Galera config from the template
+  if [ -f "/etc/mysql/galera.cnf.template" ]; then
+    export GALERA_CLUSTER_NAME GALERA_CLUSTER_ADDRESS GALERA_NODE_NAME GALERA_NODE_ADDRESS GALERA_NODE_ID MARIADB_ROOT_PASSWORD
+    envsubst < /etc/mysql/galera.cnf.template > /etc/mysql/conf.d/zz-galera.cnf ||
+      handle_error "Failed to render Galera configuration"
+    log_info "Galera configuration rendered to /etc/mysql/conf.d/zz-galera.cnf"
+  else
+    handle_error "Galera template not found: /etc/mysql/galera.cnf.template"
+  fi
+
+  # A 'force_bootstrap' marker file in the datadir tells this node to start
+  # a new cluster (first init or full-cluster recovery). One-shot: the
+  # marker is consumed here so a normal restart joins the existing cluster.
+  if [ -f "/var/lib/mysql/force_bootstrap" ]; then
+    rm -f "/var/lib/mysql/force_bootstrap"
+    WSREP_NEW_CLUSTER="--wsrep-new-cluster"
+    log_warning "Bootstrap marker found - this node will BOOTSTRAP a new cluster"
+
+    if [ -f "/var/lib/mysql/grastate.dat" ]; then
+      sed -i 's/^safe_to_bootstrap: 0/safe_to_bootstrap: 1/' "/var/lib/mysql/grastate.dat"
+    fi
+  fi
+fi
+
 # Create necessary directories
 log_info "Creating directories"
 mkdir -p "$DATADIR" || handle_error "Failed to create data directory"
@@ -58,8 +89,14 @@ if [ ! -d "$DATADIR/mysql" ]; then
     mariadbd --initialize-insecure --user=mysql --datadir="$DATADIR" --basedir=/usr || handle_error "Failed to initialize database with both methods"
   }
 
+  # Joiner nodes get all data via state transfer (SST) from the cluster,
+  # so the SQL initialization below only runs on standalone or bootstrap nodes.
+  if [ "$GALERA_ENABLED" = "yes" ] && [ -z "$WSREP_NEW_CLUSTER" ]; then
+    log_info "Galera joiner node: skipping SQL initialization (data comes via SST)"
+  else
+
   log_info "Starting MariaDB temporarily for initialization via Unix socket..."
-  mariadbd --user=mysql --datadir="$DATADIR" --socket=/run/mysqld/mysqld.sock --skip-networking --pid-file=/run/mysqld/mysqld.pid &
+  mariadbd --user=mysql --datadir="$DATADIR" --socket=/run/mysqld/mysqld.sock --skip-networking --wsrep-on=OFF --pid-file=/run/mysqld/mysqld.pid &
   pid=$!
 
   # Wait for MariaDB to become available
@@ -135,6 +172,9 @@ GRANT ALL PRIVILEGES ON \`$MARIADB_DATABASE5\`.* TO '$MARIADB_USER'@'%';
 GRANT RELOAD, REPLICATION CLIENT, BINLOG MONITOR, BINLOG REPLAY ON *.* TO '$MARIADB_USER'@'%';
 GRANT RELOAD, REPLICATION CLIENT, BINLOG MONITOR, BINLOG REPLAY ON *.* TO 'root'@'%';
 
+-- Passwordless check user for HAProxy health checks (no privileges granted)
+CREATE USER IF NOT EXISTS 'haproxy_check'@'%';
+
 FLUSH PRIVILEGES;
 EOF
 
@@ -155,6 +195,8 @@ EOF
   log_info "Stopping temporary MariaDB instance..."
   kill "$pid"
   wait "$pid" 2>/dev/null || true
+
+  fi
 
 else
   log_info "MariaDB data directory already exists, skipping initialization"
@@ -181,4 +223,7 @@ chown -R mysql:mysql /var/lib/mysql/binlogs
 chmod -R 750 /var/lib/mysql/binlogs
 
 # Start MariaDB with explicit bind-address to override any defaults
-exec mariadbd --user=mysql --datadir="$DATADIR" --bind-address=0.0.0.0
+if [ -n "$WSREP_NEW_CLUSTER" ]; then
+  log_warning "Starting MariaDB as new Galera cluster bootstrap node"
+fi
+exec mariadbd --user=mysql --datadir="$DATADIR" --bind-address=0.0.0.0 $WSREP_NEW_CLUSTER

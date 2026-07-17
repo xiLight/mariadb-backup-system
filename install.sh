@@ -28,6 +28,132 @@ check_root() {
     fi
 }
 
+run_privileged() {
+    if [[ $EUID -eq 0 ]]; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
+# --- Portolan: port/subnet manager (https://git.simbrey.com/docker-public/portolan) ---
+PORTOLAN_REPO="https://git.simbrey.com/docker-public/portolan.git"
+
+install_portolan() {
+    log_info "Setting up Portolan (port/subnet registry)..."
+
+    if command -v portolan &> /dev/null; then
+        log_success "Portolan already installed: $(command -v portolan)"
+        portolan sync &> /dev/null || true
+        return 0
+    fi
+
+    # Portolan needs sqlite3; make+git for building/installing
+    if ! command -v sqlite3 &> /dev/null || ! command -v make &> /dev/null; then
+        if command -v apt-get &> /dev/null; then
+            log_info "Installing Portolan dependencies (sqlite3, make)..."
+            run_privileged apt-get update -qq
+            run_privileged apt-get install -y -qq sqlite3 make
+        else
+            log_warning "Cannot auto-install sqlite3/make (no apt-get). Install them manually."
+        fi
+    fi
+
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+
+    log_info "Cloning Portolan from $PORTOLAN_REPO..."
+    if ! git clone --depth 1 "$PORTOLAN_REPO" "$tmp_dir/portolan" &> /dev/null; then
+        log_warning "Could not clone Portolan - continuing with default ports/subnets"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    if (cd "$tmp_dir/portolan" && run_privileged make install); then
+        log_success "Portolan installed: $(command -v portolan)"
+    else
+        log_warning "Portolan installation failed - continuing with default ports/subnets"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    rm -rf "$tmp_dir"
+
+    portolan sync &> /dev/null || true
+}
+
+# Set or append KEY=VALUE in .env
+set_env_value() {
+    local key="$1" value="$2"
+    if grep -q "^${key}=" .env; then
+        sed -i "s|^${key}=.*|${key}=${value}|" .env
+    else
+        echo "${key}=${value}" >> .env
+    fi
+}
+
+# Ask Portolan whether a port is usable for us: free, or already reserved
+# for the given service name (re-runs of the installer) while nothing
+# is actually listening on it.
+portolan_port_ok() {
+    local port="$1" service="$2" output
+    if output=$(portolan check "$port" 2>/dev/null); then
+        return 0
+    fi
+    echo "$output" | grep -q "for.*${service}" && echo "$output" | grep -q "not listening"
+}
+
+configure_network_with_portolan() {
+    if ! command -v portolan &> /dev/null; then
+        log_warning "Portolan not available - keeping default ports/subnets in .env"
+        return 0
+    fi
+
+    log_info "Determining free ports and subnets with Portolan..."
+    portolan sync &> /dev/null || true
+
+    # A subnet pool is needed for next-subnet; create a default one once
+    if ! portolan pools 2>/dev/null | awk 'NR>1' | grep -q '[0-9]'; then
+        portolan add-pool 172.20.0.0/16 "docker stacks" &> /dev/null || true
+        log_info "Created default subnet pool 172.20.0.0/16"
+    fi
+
+    # Main database port (single node: MariaDB, cluster: HAProxy) - prefer 3306
+    local db_port=3306
+    if portolan_port_ok 3306 mariadb; then
+        log_success "Port 3306 is available"
+    else
+        db_port=$(portolan next-ports 1 3307 2>/dev/null | head -1)
+        [[ "$db_port" =~ ^[0-9]+$ ]] || db_port=3306
+        log_warning "Port 3306 is taken - using Portolan's suggestion: $db_port"
+    fi
+
+    # HAProxy statistics port - prefer 8404
+    local stats_port=8404
+    if ! portolan_port_ok 8404 haproxy-stats; then
+        stats_port=$(portolan next-ports 1 8405 2>/dev/null | head -1)
+        [[ "$stats_port" =~ ^[0-9]+$ ]] || stats_port=8404
+        log_warning "Port 8404 is taken - using Portolan's suggestion: $stats_port"
+    fi
+
+    # Collision-free subnet for the Galera cluster network
+    local galera_subnet
+    galera_subnet=$(portolan next-subnet 2>/dev/null | tail -1)
+
+    set_env_value MARIADB_PORT "$db_port"
+    set_env_value HAPROXY_PORT "$db_port"
+    set_env_value HAPROXY_STATS_PORT "$stats_port"
+    if [[ "$galera_subnet" =~ ^[0-9.]+/[0-9]+$ ]]; then
+        set_env_value GALERA_SUBNET "$galera_subnet"
+        log_success "Galera cluster subnet: $galera_subnet"
+    fi
+
+    # Book the resources in Portolan's registry
+    portolan reserve "$db_port" mariadb "mariadb-backup-system" &> /dev/null || true
+    portolan reserve "$stats_port" haproxy-stats "mariadb-backup-system stats" &> /dev/null || true
+
+    log_success "Ports configured: MariaDB/HAProxy=$db_port, HAProxy stats=$stats_port"
+}
+
 # Check prerequisites
 check_prerequisites() {
     log_info "Checking prerequisites..."
@@ -242,6 +368,60 @@ start_services() {
     echo
 }
 
+# Choose between single-node and 3-node Galera cluster installation
+choose_install_mode() {
+    if [[ -n "$INSTALL_MODE" ]]; then
+        log_info "Installation mode: $INSTALL_MODE (from command line)"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${BLUE}Installation mode:${NC}"
+    echo "  [1] Single node    - one MariaDB container (default)"
+    echo "  [2] HA cluster     - 3-node Galera multi-master + HAProxy failover + self-healing"
+    echo ""
+    read -p "Select mode (1/2) [1]: " mode_sel
+    case "$mode_sel" in
+        2) INSTALL_MODE="cluster" ;;
+        *) INSTALL_MODE="single" ;;
+    esac
+    log_info "Installation mode: $INSTALL_MODE"
+}
+
+# Initialize and start the Galera cluster
+start_cluster_services() {
+    log_info "Setting up 3-node Galera cluster..."
+
+    # Backup scripts talk to node1 in cluster mode
+    set_env_value MARIADB_CONTAINER "mariadb-node1"
+
+    if [[ -f "./cluster_data/node1/grastate.dat" ]]; then
+        log_info "Existing cluster data found - starting cluster"
+        ./cluster.sh start
+    else
+        ./cluster.sh init
+    fi
+}
+
+# Install the self-healing cron job (checks the cluster every minute)
+setup_heal_cron() {
+    log_info "Setting up self-healing cron job..."
+
+    if ! command -v crontab &> /dev/null; then
+        log_warning "crontab not available - install cron or run './heal.sh --daemon' instead"
+        return 0
+    fi
+
+    local cron_line="* * * * * cd $(pwd) && ./heal.sh >/dev/null 2>&1"
+    if crontab -l 2>/dev/null | grep -qF "/heal.sh"; then
+        log_info "Self-healing cron job already installed"
+    else
+        (crontab -l 2>/dev/null; echo "$cron_line") | crontab - &&
+            log_success "Self-healing cron job installed (checks every minute)" ||
+            log_warning "Could not install cron job - add manually: $cron_line"
+    fi
+}
+
 # Run initial backup test
 test_backup() {
     log_info "Running initial backup test..."
@@ -260,6 +440,25 @@ show_completion_info() {
     echo -e "${GREEN}║                    Installation Complete!                   ║${NC}"
     echo -e "${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo
+    if [[ "$INSTALL_MODE" == "cluster" ]]; then
+        echo -e "${BLUE}Cluster Setup:${NC}"
+        echo -e "   ${YELLOW}3-node Galera cluster${NC}            # Synchronous multi-master replication"
+        echo -e "   ${YELLOW}HAProxy on port $(grep '^HAPROXY_PORT=' .env | cut -d= -f2)${NC}             # Automatic failover"
+        echo -e "   ${YELLOW}Stats: http://localhost:$(grep '^HAPROXY_STATS_PORT=' .env | cut -d= -f2)${NC}   # HAProxy dashboard"
+        echo -e "   ${YELLOW}Self-healing cron${NC}                # Checks the cluster every minute"
+        echo
+        echo -e "${BLUE}Cluster Commands:${NC}"
+        echo -e "   ${YELLOW}./cluster.sh status${NC}               # Cluster health"
+        echo -e "   ${YELLOW}./update.sh${NC}                       # Rolling update (zero downtime)"
+        echo -e "   ${YELLOW}./heal.sh${NC}                         # Manual healing check"
+        echo
+    fi
+    if command -v portolan &> /dev/null; then
+        echo -e "${BLUE}Portolan:${NC}"
+        echo -e "   ${YELLOW}portolan dash${NC}                     # Port/subnet dashboard"
+        echo -e "   ${YELLOW}portolan check-live${NC}               # What is listening right now?"
+        echo
+    fi
     echo -e "${BLUE}Next Steps:${NC}"
     echo "1. Review and customize your .env file"
     echo "2. Start using the backup system:"
@@ -306,9 +505,27 @@ check_logging_system() {
 
 # Main installation function
 main() {
+    INSTALL_MODE=""
+    local arg
+    for arg in "$@"; do
+        case $arg in
+            --cluster)    INSTALL_MODE="cluster" ;;
+            --single)     INSTALL_MODE="single" ;;
+            --allow-root) ;;
+            --help)
+                echo "Usage: $0 [--single|--cluster] [--allow-root]"
+                echo ""
+                echo "  --single      Install a single MariaDB node (no prompt)"
+                echo "  --cluster     Install the 3-node Galera HA cluster (no prompt)"
+                echo "  --allow-root  Accepted for compatibility"
+                exit 0
+                ;;
+        esac
+    done
+
     # Create lib directory early for logging system
     mkdir -p lib
-    
+
     # Check if logging system exists (after creating lib directory)
     if [ -f "lib/logging.sh" ]; then
         check_logging_system
@@ -321,12 +538,22 @@ main() {
     print_banner
     check_root
     check_prerequisites
+    install_portolan
+    choose_install_mode
     setup_environment
+    configure_network_with_portolan
     setup_directories
     setup_permissions
     setup_encryption
     setup_network
-    start_services
+
+    if [[ "$INSTALL_MODE" == "cluster" ]]; then
+        start_cluster_services
+        setup_heal_cron
+    else
+        start_services
+    fi
+
     test_backup
     show_completion_info
 }
