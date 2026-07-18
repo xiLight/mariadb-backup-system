@@ -1,6 +1,6 @@
 # MariaDB Backup System Makefile
 
-.PHONY: help install env start stop restart status backup backup-full backup-incremental restore verify cleanup health logs clean build
+.PHONY: help install env start stop restart status backup backup-full backup-incremental restore verify cleanup health logs clean build database user provision superuser list-db
 
 # Default target
 help:
@@ -21,6 +21,13 @@ help:
 	@echo "  make backup-empty     - Create full backup including empty DBs"
 	@echo "  make verify           - Verify integrity of all backups"
 	@echo "  make verify-latest    - Verify latest backup per database"
+	@echo ""
+	@echo "Database Administration:"
+	@echo "  make database         - Create a database          (NAME=mydb)"
+	@echo "  make user             - Create a user              (NAME=myuser PASS=optional)"
+	@echo "  make provision        - Create DB + user + grants  (NAME=myapp PASS=optional)"
+	@echo "  make superuser        - Create a superuser         (NAME=admin PASS=optional)"
+	@echo "  make list-db          - List databases and users"
 	@echo ""
 	@echo "Maintenance:"
 	@echo "  make cleanup          - Clean old backups and logs"
@@ -155,6 +162,22 @@ heal:
 
 heal-daemon:
 	@./heal.sh --daemon
+
+# Database administration (interactive without NAME, scriptable with NAME=/PASS=)
+database:
+	@./db_admin.sh create-database $(NAME)
+
+user:
+	@./db_admin.sh create-user $(NAME) $(PASS)
+
+provision:
+	@./db_admin.sh provision $(NAME) $(PASS)
+
+superuser:
+	@./db_admin.sh create-superuser $(NAME) $(PASS)
+
+list-db:
+	@./db_admin.sh list
 
 # Verify operations
 verify:

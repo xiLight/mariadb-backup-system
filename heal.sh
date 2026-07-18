@@ -90,25 +90,25 @@ pick_bootstrap_node() {
   if [[ -n "$best_node" ]]; then
     echo "$best_node"
   else
-    echo "mariadb-node1"
+    echo "node1"
   fi
 }
 
 full_cluster_recovery() {
   log_warning "=== FULL CLUSTER RECOVERY ==="
 
-  compose_cluster stop mariadb-node1 mariadb-node2 mariadb-node3 2>/dev/null
+  compose_cluster stop node1 node2 node3 2>/dev/null
 
   local bootstrap_node
   bootstrap_node=$(pick_bootstrap_node)
-  log_info "Bootstrapping from $bootstrap_node (newest data)"
+  log_info "Bootstrapping from $(node_container "$bootstrap_node") (newest data)"
 
   touch "$(node_datadir "$bootstrap_node")/force_bootstrap"
   compose_cluster up -d "$bootstrap_node"
 
   if ! wait_node_synced "$bootstrap_node"; then
-    log_error "Bootstrap node $bootstrap_node failed to start - manual intervention required"
-    log_error "Check: docker logs $bootstrap_node"
+    log_error "Bootstrap node $(node_container "$bootstrap_node") failed to start - manual intervention required"
+    log_error "Check: docker logs $(node_container "$bootstrap_node")"
     return 1
   fi
 
@@ -150,8 +150,11 @@ heal_once() {
 
   # Heal individual nodes
   for node in "${CLUSTER_NODES[@]}"; do
+    local container
+    container=$(node_container "$node")
+
     if ! node_running "$node"; then
-      log_warning "$node is not running - starting it"
+      log_warning "$container is not running - starting it"
       compose_cluster up -d "$node"
       clear_strikes "$node"
       continue
@@ -168,23 +171,23 @@ heal_once() {
     state=$(node_wsrep "$node" wsrep_local_state_comment)
 
     if [[ "$state" == "Donor/Desynced" || "$state" == "Joining"* || "$state" == "Joined" ]]; then
-      log_info "$node is in transient state '$state' - leaving it alone"
+      log_info "$container is in transient state '$state' - leaving it alone"
       clear_strikes "$node"
       continue
     fi
 
     strikes=$(add_strike "$node")
-    log_warning "$node is unhealthy (state: ${state:-not responding}, strike $strikes/$STRIKE_LIMIT)"
+    log_warning "$container is unhealthy (state: ${state:-not responding}, strike $strikes/$STRIKE_LIMIT)"
 
     if (( strikes >= STRIKE_LIMIT )); then
-      log_warning "Restarting $node after $STRIKE_LIMIT failed checks"
-      docker restart "$node" >/dev/null 2>&1 || compose_cluster up -d "$node"
+      log_warning "Restarting $container after $STRIKE_LIMIT failed checks"
+      docker restart "$container" >/dev/null 2>&1 || compose_cluster up -d "$node"
       clear_strikes "$node"
     fi
   done
 
   # Heal HAProxy
-  if ! node_running mariadb-haproxy; then
+  if ! container_running "$(node_container haproxy)"; then
     log_warning "HAProxy is not running - starting it"
     compose_cluster up -d haproxy
   fi

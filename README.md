@@ -34,8 +34,9 @@ make install
 # or interactively choose single node vs. HA cluster:
 ./install.sh
 # or non-interactive:
-./install.sh --single     # one MariaDB container
-./install.sh --cluster    # 3-node Galera cluster + HAProxy + self-healing cron
+./install.sh --single                  # one MariaDB container
+./install.sh --cluster                 # 3-node Galera cluster + HAProxy + self-healing cron
+./install.sh --cluster --stack shop    # unique stack name -> shop-node1, shop-haproxy, ...
 
 # Verify installation
 make health
@@ -250,11 +251,25 @@ What it heals automatically:
 * * * * * cd /path/to/mariadb-backup-system && ./heal.sh >/dev/null 2>&1
 ```
 
+### Unique Names per Stack
+
+`STACK_NAME` in `.env` prefixes the compose project, all container names, and
+the image tag - so several installations can run on one host without collisions:
+
+```
+STACK_NAME=shop   ->  shop-node1, shop-node2, shop-node3, shop-haproxy
+STACK_NAME=blog   ->  blog-node1, blog-node2, blog-node3, blog-haproxy
+```
+
+The cluster nodes only join the stack's private `galera` network (its subnet
+comes from Portolan via `GALERA_SUBNET`). Only HAProxy joins the shared `web`
+network - other containers reach it via its unique name, e.g. `shop-haproxy:3306`.
+
 ### Backups in Cluster Mode
 
-Point the backup system at one node in `.env`:
+Point the backup system at one node in `.env` (install.sh does this automatically):
 ```
-MARIADB_CONTAINER=mariadb-node1
+MARIADB_CONTAINER=${STACK_NAME}-node1    # e.g. mariadb-node1
 ```
 All backup/restore/verify scripts work unchanged. Restores replicate to the
 other nodes automatically (SQL imports go through Galera replication).
@@ -348,6 +363,28 @@ other nodes automatically (SQL imports go through Galera replication).
 
 > **Note:** Restoring overwrites the target database. The script asks for
 > confirmation unless `--yes` is passed.
+
+#### Database Administration
+
+```bash
+# Create a database
+./db_admin.sh create-database mydb          # or: make database NAME=mydb
+
+# Create a user (password auto-generated if omitted, shown once)
+./db_admin.sh create-user myuser            # or: make user NAME=myuser
+
+# Provision: database + same-named user with ALL privileges on that DB only
+./db_admin.sh provision myapp               # or: make provision NAME=myapp
+
+# Superuser with full access to all databases (asks for confirmation)
+./db_admin.sh create-superuser admin        # or: make superuser NAME=admin
+
+# List databases and users
+./db_admin.sh list                          # or: make list-db
+```
+
+Without arguments the commands ask interactively. In cluster mode all
+changes replicate to every node automatically.
 
 #### Maintenance Commands
 

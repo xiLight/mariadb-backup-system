@@ -37,21 +37,21 @@ cmd_init() {
   touch cluster_data/node1/force_bootstrap
 
   log_info "Building cluster image..."
-  compose_cluster build mariadb-node1 || { log_error "Image build failed"; exit 1; }
+  compose_cluster build node1 || { log_error "Image build failed"; exit 1; }
 
   log_info "Bootstrapping node1..."
-  compose_cluster up -d mariadb-node1
+  compose_cluster up -d node1
 
-  wait_node_synced mariadb-node1 || {
-    log_error "Bootstrap failed. Check: docker logs mariadb-node1"
+  wait_node_synced node1 || {
+    log_error "Bootstrap failed. Check: docker logs $(node_container node1)"
     exit 1
   }
 
   log_info "Joining node2 and node3 (initial state transfer may take a while)..."
-  compose_cluster up -d mariadb-node2 mariadb-node3
+  compose_cluster up -d node2 node3
 
-  wait_node_synced mariadb-node2 || exit 1
-  wait_node_synced mariadb-node3 || exit 1
+  wait_node_synced node2 || exit 1
+  wait_node_synced node3 || exit 1
 
   log_info "Starting HAProxy..."
   compose_cluster up -d haproxy
@@ -82,7 +82,7 @@ cmd_start() {
 cmd_stop() {
   log_info "Stopping cluster..."
   compose_cluster stop haproxy
-  compose_cluster stop mariadb-node3 mariadb-node2 mariadb-node1
+  compose_cluster stop node3 node2 node1
   log_success "Cluster stopped. Restart with: ./cluster.sh start"
 }
 
@@ -99,7 +99,7 @@ cmd_status() {
     log_error "Cluster is down (0/3 nodes synced) - run ./heal.sh to recover"
   fi
 
-  if node_running mariadb-haproxy; then
+  if container_running "$(node_container haproxy)"; then
     log_info "HAProxy: running (stats: http://localhost:${HAPROXY_STATS_PORT:-8404})"
   else
     log_warning "HAProxy: not running"

@@ -78,7 +78,7 @@ if [[ "$SKIP_PULL" == "false" ]]; then
 fi
 
 # --- Step 2: Detect mode ---------------------------------------------------
-CLUSTER_RUNNING=$(compose_cluster ps -q mariadb-node1 mariadb-node2 mariadb-node3 2>/dev/null | wc -l)
+CLUSTER_RUNNING=$(compose_cluster ps -q node1 node2 node3 2>/dev/null | wc -l)
 
 if [[ "$CLUSTER_RUNNING" -eq 0 ]]; then
   if [[ -d "./cluster_data" ]]; then
@@ -119,30 +119,31 @@ if [[ "$SKIP_CONFIRM" != "true" ]]; then
 fi
 
 log_info "Building updated image..."
-compose_cluster build mariadb-node1 || { log_error "Image build failed - nothing was changed"; exit 1; }
+compose_cluster build node1 || { log_error "Image build failed - nothing was changed"; exit 1; }
 
 for node in "${CLUSTER_NODES[@]}"; do
+  CONTAINER=$(node_container "$node")
   echo ""
-  log_info "=== Updating $node (remaining nodes keep serving traffic) ==="
+  log_info "=== Updating $CONTAINER (remaining nodes keep serving traffic) ==="
 
   compose_cluster up -d --no-deps --force-recreate "$node" || {
-    log_error "Failed to recreate $node - aborting update"
+    log_error "Failed to recreate $CONTAINER - aborting update"
     exit 1
   }
 
   if ! wait_node_synced "$node"; then
-    log_error "$node did not rejoin the cluster - ABORTING update."
-    log_error "The remaining nodes are still serving. Investigate with: docker logs $node"
+    log_error "$CONTAINER did not rejoin the cluster - ABORTING update."
+    log_error "The remaining nodes are still serving. Investigate with: docker logs $CONTAINER"
     exit 1
   fi
 
   SIZE=$(cluster_size "$node")
   if [[ "$SIZE" != "3" ]]; then
-    log_error "Cluster size is $SIZE (expected 3) after updating $node - aborting"
+    log_error "Cluster size is $SIZE (expected 3) after updating $CONTAINER - aborting"
     exit 1
   fi
 
-  log_success "=== $node updated and back in sync ==="
+  log_success "=== $CONTAINER updated and back in sync ==="
 done
 
 log_info "Refreshing HAProxy..."

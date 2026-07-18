@@ -332,40 +332,70 @@ start_services() {
     fi
     
     log_success "MariaDB container started"
-    
+
     # Wait for MariaDB to be ready
     log_info "Waiting for MariaDB to be ready..."
-    
+
     # First wait for container to be running
     sleep 5
-    
-    # Get the root password from .env file
-    ROOT_PASSWORD=$(grep MARIADB_ROOT_PASSWORD .env | cut -d'=' -f2)
-    
+
+    # Get container name and root password from .env file
+    local container root_password
+    container=$(grep '^MARIADB_CONTAINER=' .env | cut -d'=' -f2)
+    container="${container:-mariadb}"
+    root_password=$(grep '^MARIADB_ROOT_PASSWORD=' .env | cut -d'=' -f2)
+
     for i in {1..60}; do
-        # Try multiple connection methods
-        if docker exec mariadb mariadb -u root -p"$ROOT_PASSWORD" -h 127.0.0.1 -P 3306 -e "SELECT 1;" &>/dev/null; then
+        # Try multiple connection methods (password via env, not process list)
+        if docker exec -e MYSQL_PWD="$root_password" "$container" mariadb -u root -h 127.0.0.1 -P 3306 -e "SELECT 1;" &>/dev/null; then
             log_success "MariaDB is ready!"
             break
-        elif docker exec mariadb mariadb -u root -p"$ROOT_PASSWORD" --protocol=tcp --host=localhost --port=3306 -e "SELECT 1;" &>/dev/null; then
+        elif docker exec -e MYSQL_PWD="$root_password" "$container" mariadb -u root -e "SELECT 1;" &>/dev/null; then
             log_success "MariaDB is ready!"
             break
-        elif docker exec mariadb mariadb -u root -p"$ROOT_PASSWORD" -e "SELECT 1;" &>/dev/null; then
+        elif docker exec "$container" mariadb -u root -e "SELECT 1;" &>/dev/null; then
             log_success "MariaDB is ready!"
             break
         fi
-        
+
         if [ $i -eq 60 ]; then
             log_error "MariaDB failed to start within 60 seconds"
-            log_info "Check logs with: docker logs mariadb"
+            log_info "Check logs with: docker logs $container"
             log_info "Trying to show recent container logs:"
-            docker logs --tail 20 mariadb
+            docker logs --tail 20 "$container"
             exit 1
         fi
         sleep 1
         echo -n "."
     done
     echo
+}
+
+# Every installation gets a unique stack name - it prefixes the compose
+# project, all container names, and the image tag, so multiple stacks
+# can coexist on one host.
+configure_stack_name() {
+    local stack="$STACK_NAME_ARG"
+
+    if [[ -z "$stack" ]]; then
+        echo ""
+        read -p "Stack name (unique per installation, e.g. shop, blog) [mariadb]: " stack
+        stack="${stack:-mariadb}"
+    fi
+
+    if ! [[ "$stack" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+        log_warning "Invalid stack name '$stack' (allowed: a-z, 0-9, -, _) - using 'mariadb'"
+        stack="mariadb"
+    fi
+
+    set_env_value STACK_NAME "$stack"
+
+    # Single-node mode: the container itself carries the stack name
+    if [[ "$INSTALL_MODE" != "cluster" ]]; then
+        set_env_value MARIADB_CONTAINER "$stack"
+    fi
+
+    log_success "Stack name: $stack"
 }
 
 # Choose between single-node and 3-node Galera cluster installation
@@ -393,7 +423,9 @@ start_cluster_services() {
     log_info "Setting up 3-node Galera cluster..."
 
     # Backup scripts talk to node1 in cluster mode
-    set_env_value MARIADB_CONTAINER "mariadb-node1"
+    local stack
+    stack=$(grep '^STACK_NAME=' .env | cut -d= -f2)
+    set_env_value MARIADB_CONTAINER "${stack:-mariadb}-node1"
 
     if [[ -f "./cluster_data/node1/grastate.dat" ]]; then
         log_info "Existing cluster data found - starting cluster"
@@ -506,20 +538,23 @@ check_logging_system() {
 # Main installation function
 main() {
     INSTALL_MODE=""
-    local arg
-    for arg in "$@"; do
-        case $arg in
-            --cluster)    INSTALL_MODE="cluster" ;;
-            --single)     INSTALL_MODE="single" ;;
-            --allow-root) ;;
+    STACK_NAME_ARG=""
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --cluster)    INSTALL_MODE="cluster"; shift ;;
+            --single)     INSTALL_MODE="single"; shift ;;
+            --stack)      STACK_NAME_ARG="$2"; shift 2 ;;
+            --allow-root) shift ;;
             --help)
-                echo "Usage: $0 [--single|--cluster] [--allow-root]"
+                echo "Usage: $0 [--single|--cluster] [--stack NAME] [--allow-root]"
                 echo ""
                 echo "  --single      Install a single MariaDB node (no prompt)"
                 echo "  --cluster     Install the 3-node Galera HA cluster (no prompt)"
+                echo "  --stack NAME  Unique stack name (prefixes all container names)"
                 echo "  --allow-root  Accepted for compatibility"
                 exit 0
                 ;;
+            *) shift ;;
         esac
     done
 
@@ -541,6 +576,7 @@ main() {
     install_portolan
     choose_install_mode
     setup_environment
+    configure_stack_name
     configure_network_with_portolan
     setup_directories
     setup_permissions

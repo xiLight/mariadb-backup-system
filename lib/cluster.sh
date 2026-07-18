@@ -1,29 +1,43 @@
 #!/bin/bash
 # Shared helpers for Galera cluster management (cluster.sh, update.sh, heal.sh).
 # Requires: .env sourced, lib/logging.sh sourced.
+#
+# Naming: compose SERVICE names are static (node1, node2, node3, haproxy);
+# CONTAINER names are unique per stack instance: ${STACK_NAME}-node1 etc.
+# Helpers take the service name and map to the container where needed.
 
 CLUSTER_COMPOSE_FILE="${CLUSTER_COMPOSE_FILE:-docker-compose.cluster.yml}"
-CLUSTER_NODES=(mariadb-node1 mariadb-node2 mariadb-node3)
+CLUSTER_NODES=(node1 node2 node3)
 CLUSTER_SYNC_TIMEOUT="${CLUSTER_SYNC_TIMEOUT:-600}"
+STACK_NAME="${STACK_NAME:-mariadb}"
 
 compose_cluster() {
   docker compose -f "$CLUSTER_COMPOSE_FILE" "$@"
 }
 
-# mariadb-node2 -> ./cluster_data/node2
-node_datadir() {
-  echo "./cluster_data/node${1#mariadb-node}"
+# node1 -> ${STACK_NAME}-node1 (also: haproxy -> ${STACK_NAME}-haproxy)
+node_container() {
+  echo "${STACK_NAME}-$1"
 }
 
-node_running() {
+# node1 -> ./cluster_data/node1
+node_datadir() {
+  echo "./cluster_data/$1"
+}
+
+container_running() {
   docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$1"
 }
 
-node_query() {
-  docker exec -e MYSQL_PWD="$MARIADB_ROOT_PASSWORD" "$1" mariadb -u root -N -e "$2" 2>/dev/null
+node_running() {
+  container_running "$(node_container "$1")"
 }
 
-# Value of a wsrep status variable, e.g. node_wsrep mariadb-node1 wsrep_local_state_comment
+node_query() {
+  docker exec -e MYSQL_PWD="$MARIADB_ROOT_PASSWORD" "$(node_container "$1")" mariadb -u root -N -e "$2" 2>/dev/null
+}
+
+# Value of a wsrep status variable, e.g. node_wsrep node1 wsrep_local_state_comment
 node_wsrep() {
   node_query "$1" "SHOW STATUS LIKE '$2';" | awk '{print $2}'
 }
@@ -45,17 +59,17 @@ wait_node_synced() {
   local node="$1" timeout="${2:-$CLUSTER_SYNC_TIMEOUT}"
   local waited=0
 
-  log_info "Waiting for $node to become Synced (timeout: ${timeout}s)..."
+  log_info "Waiting for $(node_container "$node") to become Synced (timeout: ${timeout}s)..."
   while (( waited < timeout )); do
     if node_running "$node" && node_is_synced "$node"; then
-      log_success "$node is Synced (cluster size: $(cluster_size "$node"))"
+      log_success "$(node_container "$node") is Synced (cluster size: $(cluster_size "$node"))"
       return 0
     fi
     sleep 5
     waited=$((waited + 5))
   done
 
-  log_error "$node did not reach Synced state within ${timeout}s"
+  log_error "$(node_container "$node") did not reach Synced state within ${timeout}s"
   return 1
 }
 
@@ -73,16 +87,16 @@ cluster_healthy_count() {
 print_cluster_status() {
   local node state status size
   echo ""
-  printf "%-16s %-10s %-12s %-10s %-6s\n" "NODE" "CONTAINER" "STATE" "CLUSTER" "SIZE"
-  echo "----------------------------------------------------------"
+  printf "%-20s %-10s %-12s %-10s %-6s\n" "CONTAINER" "STATUS" "STATE" "CLUSTER" "SIZE"
+  echo "--------------------------------------------------------------"
   for node in "${CLUSTER_NODES[@]}"; do
     if node_running "$node"; then
       state=$(node_wsrep "$node" wsrep_local_state_comment)
       status=$(node_wsrep "$node" wsrep_cluster_status)
       size=$(cluster_size "$node")
-      printf "%-16s %-10s %-12s %-10s %-6s\n" "$node" "running" "${state:-n/a}" "${status:-n/a}" "${size:-n/a}"
+      printf "%-20s %-10s %-12s %-10s %-6s\n" "$(node_container "$node")" "running" "${state:-n/a}" "${status:-n/a}" "${size:-n/a}"
     else
-      printf "%-16s %-10s %-12s %-10s %-6s\n" "$node" "stopped" "-" "-" "-"
+      printf "%-20s %-10s %-12s %-10s %-6s\n" "$(node_container "$node")" "stopped" "-" "-" "-"
     fi
   done
   echo ""

@@ -127,7 +127,7 @@ check_backup_directories() {
 check_scripts() {
     log_info "Checking script permissions..."
 
-    scripts=("backup.sh" "restore.sh" "encrypt_backup.sh" "verify_backup.sh" "cleanup_backups.sh" "cleanup_binlogs.sh" "log_cleanup.sh")
+    scripts=("backup.sh" "restore.sh" "encrypt_backup.sh" "verify_backup.sh" "cleanup_backups.sh" "cleanup_binlogs.sh" "log_cleanup.sh" "db_admin.sh")
 
     for script in "${scripts[@]}"; do
         if [ -f "$script" ]; then

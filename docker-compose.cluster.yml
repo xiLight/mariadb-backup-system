@@ -1,9 +1,16 @@
+# STACK_NAME (from .env) makes every name unique per stack instance:
+# project name, container names, image tag - so multiple installations
+# can run on the same host without collisions.
+# Internal service DNS (node1/node2/node3) is scoped to this project's
+# galera network; only HAProxy joins the shared 'web' network. Apps
+# connect to ${STACK_NAME}-haproxy (or the published HAPROXY_PORT).
+name: ${STACK_NAME:-mariadb}-cluster
+
 x-node-common: &node-common
-  image: mariadb-galera:local
+  image: ${STACK_NAME:-mariadb}-galera:local
   restart: unless-stopped
   networks:
     - galera
-    - web
   healthcheck:
     test: ["CMD", "mariadb-admin", "ping", "-h", "localhost"]
     interval: 15s
@@ -33,20 +40,20 @@ x-node-env: &node-env
   TZ: ${TZ:-Europe/Berlin}
   GALERA_ENABLED: "yes"
   GALERA_CLUSTER_NAME: ${GALERA_CLUSTER_NAME:-mariadb-galera}
-  GALERA_CLUSTER_ADDRESS: gcomm://mariadb-node1,mariadb-node2,mariadb-node3
+  GALERA_CLUSTER_ADDRESS: gcomm://node1,node2,node3
 
 services:
-  mariadb-node1:
+  node1:
     <<: *node-common
     build:
       context: .
       dockerfile: Dockerfile.mariadb
-    container_name: mariadb-node1
+    container_name: ${STACK_NAME:-mariadb}-node1
     environment:
       <<: *node-env
       GALERA_NODE_ID: "1"
       GALERA_NODE_NAME: node1
-      GALERA_NODE_ADDRESS: mariadb-node1
+      GALERA_NODE_ADDRESS: node1
     volumes:
       - ./cluster_data/node1:/var/lib/mysql
       - ./my_custom.cnf:/etc/mysql/conf.d/my_custom.cnf:ro
@@ -55,16 +62,16 @@ services:
       - ./lib:/usr/local/lib:ro
     entrypoint: ["/usr/local/bin/entrypoint.sh"]
 
-  mariadb-node2:
+  node2:
     <<: *node-common
-    container_name: mariadb-node2
+    container_name: ${STACK_NAME:-mariadb}-node2
     depends_on:
-      - mariadb-node1
+      - node1
     environment:
       <<: *node-env
       GALERA_NODE_ID: "2"
       GALERA_NODE_NAME: node2
-      GALERA_NODE_ADDRESS: mariadb-node2
+      GALERA_NODE_ADDRESS: node2
     volumes:
       - ./cluster_data/node2:/var/lib/mysql
       - ./my_custom.cnf:/etc/mysql/conf.d/my_custom.cnf:ro
@@ -73,16 +80,16 @@ services:
       - ./lib:/usr/local/lib:ro
     entrypoint: ["/usr/local/bin/entrypoint.sh"]
 
-  mariadb-node3:
+  node3:
     <<: *node-common
-    container_name: mariadb-node3
+    container_name: ${STACK_NAME:-mariadb}-node3
     depends_on:
-      - mariadb-node1
+      - node1
     environment:
       <<: *node-env
       GALERA_NODE_ID: "3"
       GALERA_NODE_NAME: node3
-      GALERA_NODE_ADDRESS: mariadb-node3
+      GALERA_NODE_ADDRESS: node3
     volumes:
       - ./cluster_data/node3:/var/lib/mysql
       - ./my_custom.cnf:/etc/mysql/conf.d/my_custom.cnf:ro
@@ -93,7 +100,7 @@ services:
 
   haproxy:
     image: haproxy:2.9-alpine
-    container_name: mariadb-haproxy
+    container_name: ${STACK_NAME:-mariadb}-haproxy
     restart: unless-stopped
     ports:
       - "${HAPROXY_PORT:-3306}:3306"
@@ -104,9 +111,9 @@ services:
       - galera
       - web
     depends_on:
-      - mariadb-node1
-      - mariadb-node2
-      - mariadb-node3
+      - node1
+      - node2
+      - node3
     logging:
       driver: "json-file"
       options:
