@@ -56,7 +56,8 @@ tmp_table_size = 64M
 max_heap_table_size = 64M
 
 # Logging
-log_error = /var/lib/mysql/error.log
+# No log_error file: errors go to stderr so 'docker logs' shows them
+# (docker-compose already rotates container logs, max 3x10MB)
 slow_query_log = 1
 slow_query_log_file = /var/lib/mysql/slow_query.log
 long_query_time = 2

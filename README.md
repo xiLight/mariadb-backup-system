@@ -604,8 +604,13 @@ failed SST (state transfer from the donor). Diagnose first, always:
 # THE most important command - the reason is in the joiner's log:
 docker logs --tail 50 <stack>-node2
 
+# Datadirs created before the log_error removal write errors to a file
+# instead of docker logs - check that too:
+tail -50 cluster_data/node2/error.log
+
 # Also check the donor side (node1) for SST errors:
 docker logs --tail 50 <stack>-node1 2>&1 | grep -i sst
+tail -50 cluster_data/node1/error.log | grep -i sst
 ```
 
 Common causes and fixes:

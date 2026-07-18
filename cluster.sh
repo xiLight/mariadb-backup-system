@@ -24,6 +24,26 @@ usage() {
   exit 0
 }
 
+# Detect networks of other/old stacks that already occupy GALERA_SUBNET -
+# docker would fail with "Pool overlaps with other one on this address space"
+check_subnet_conflict() {
+  local subnet="${GALERA_SUBNET:-172.28.66.0/24}"
+  local own_net="${STACK_NAME}-cluster_galera"
+  local net
+
+  for net in $(docker network ls --format '{{.Name}}'); do
+    [[ "$net" == "$own_net" ]] && continue
+    if docker network inspect "$net" 2>/dev/null | grep -q "\"Subnet\": \"$subnet\""; then
+      log_error "Network '$net' already uses subnet $subnet (your GALERA_SUBNET)."
+      log_info "Usually a leftover from an old stack name. Fix with:"
+      log_info "  docker network rm $net"
+      log_info "or set a different GALERA_SUBNET in .env"
+      return 1
+    fi
+  done
+  return 0
+}
+
 cmd_init() {
   if [[ -f "./cluster_data/node1/grastate.dat" ]]; then
     log_error "Cluster already initialized (cluster_data/node1/grastate.dat exists)."
@@ -33,6 +53,8 @@ cmd_init() {
 
   log_info "Initializing new 3-node Galera cluster..."
 
+  check_subnet_conflict || exit 1
+
   mkdir -p cluster_data/node1 cluster_data/node2 cluster_data/node3
   touch cluster_data/node1/force_bootstrap
 
@@ -40,7 +62,10 @@ cmd_init() {
   compose_cluster build node1 || { log_error "Image build failed"; exit 1; }
 
   log_info "Bootstrapping node1..."
-  compose_cluster up -d node1
+  compose_cluster up -d node1 || {
+    log_error "Failed to create/start node1 - see the docker error above"
+    exit 1
+  }
 
   wait_node_synced node1 || {
     log_error "Bootstrap failed. Check: docker logs $(node_container node1)"
@@ -48,7 +73,10 @@ cmd_init() {
   }
 
   log_info "Joining node2 and node3 (initial state transfer may take a while)..."
-  compose_cluster up -d node2 node3
+  compose_cluster up -d node2 node3 || {
+    log_error "Failed to create/start node2/node3 - see the docker error above"
+    exit 1
+  }
 
   wait_node_synced node2 || exit 1
   wait_node_synced node3 || exit 1

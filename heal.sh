@@ -104,7 +104,10 @@ full_cluster_recovery() {
   log_info "Bootstrapping from $(node_container "$bootstrap_node") (newest data)"
 
   touch "$(node_datadir "$bootstrap_node")/force_bootstrap"
-  compose_cluster up -d "$bootstrap_node"
+  compose_cluster up -d "$bootstrap_node" || {
+    log_error "Failed to create/start $(node_container "$bootstrap_node") - see the docker error above"
+    return 1
+  }
 
   if ! wait_node_synced "$bootstrap_node"; then
     log_error "Bootstrap node $(node_container "$bootstrap_node") failed to start - manual intervention required"

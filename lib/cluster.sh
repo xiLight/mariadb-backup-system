@@ -83,6 +83,14 @@ wait_node_synced() {
   log_error "$container did not reach Synced state within ${timeout}s"
   log_error "Last container log lines (look for SST/wsrep errors):"
   docker logs --tail 20 "$container" 2>&1 | sed 's/^/    /'
+
+  # Older datadirs still route errors to a file - show that too
+  local errlog
+  errlog="$(node_datadir "$node")/error.log"
+  if [[ -f "$errlog" ]]; then
+    log_error "Last lines from $errlog:"
+    tail -20 "$errlog" | sed 's/^/    /'
+  fi
   return 1
 }
 
