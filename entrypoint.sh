@@ -43,7 +43,8 @@ if [ "$GALERA_ENABLED" = "yes" ]; then
 
   # Render the per-node Galera config from the template
   if [ -f "/etc/mysql/galera.cnf.template" ]; then
-    export GALERA_CLUSTER_NAME GALERA_CLUSTER_ADDRESS GALERA_NODE_NAME GALERA_NODE_ADDRESS GALERA_NODE_ID MARIADB_ROOT_PASSWORD
+    GALERA_SST_METHOD="${GALERA_SST_METHOD:-mariabackup}"
+    export GALERA_CLUSTER_NAME GALERA_CLUSTER_ADDRESS GALERA_NODE_NAME GALERA_NODE_ADDRESS GALERA_NODE_ID GALERA_SST_METHOD MARIADB_ROOT_PASSWORD
     envsubst < /etc/mysql/galera.cnf.template > /etc/mysql/conf.d/zz-galera.cnf ||
       handle_error "Failed to render Galera configuration"
     log_info "Galera configuration rendered to /etc/mysql/conf.d/zz-galera.cnf"
@@ -181,6 +182,12 @@ GRANT RELOAD, REPLICATION CLIENT, BINLOG MONITOR, BINLOG REPLAY ON *.* TO '$MARI
 
 -- Passwordless check user for HAProxy health checks (no privileges granted)
 CREATE USER IF NOT EXISTS 'haproxy_check'@'%';
+
+-- SST user for Galera state transfers (mariabackup on the donor connects
+-- with password auth; root@localhost uses unix_socket which the SST
+-- script - running as the mysql user - cannot pass)
+CREATE USER IF NOT EXISTS 'sst_user'@'localhost' IDENTIFIED BY '$MARIADB_ROOT_PASSWORD';
+GRANT RELOAD, PROCESS, LOCK TABLES, BINLOG MONITOR ON *.* TO 'sst_user'@'localhost';
 
 FLUSH PRIVILEGES;
 EOF

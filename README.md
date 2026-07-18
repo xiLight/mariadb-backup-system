@@ -244,29 +244,30 @@ other nodes automatically (SQL imports go through Galera replication).
 
 ## Key Improvements in Current Version
 
-### 🔧 Enhanced Restore System
-- **Interactive Selection**: Choose databases and backups through user-friendly menus
-- **ALL_DATABASES Option**: Restore all databases with a single command
-- **Better Error Handling**: Detailed error messages and debugging options
-- **Verbose Mode**: Step-by-step progress information during restore
+### 🌐 High Availability
+- **3-node Galera cluster** with synchronous multi-master replication
+- **HAProxy failover** with automatic failback and single-writer routing
+- **Rolling updates** (`update.sh`): git pull + node-by-node restart, zero downtime
+- **Self-healing** (`heal.sh`): restarts stuck/stopped nodes, recovers a fully
+  dead cluster from the node with the newest data
 
-### 🔍 Fixed Binary Log Issues
-- **MariaDB Compatibility**: Uses `/usr/bin/mariadb-binlog` instead of legacy `mysqlbinlog`
-- **File Filtering**: Properly excludes `.index` and `.idx` files from processing
-- **Temporary Processing**: Safer binlog handling with container-based processing
-- **Point-in-Time Recovery**: Accurate timestamp-based restoration
+### 🔒 Security Hardening
+- PBKDF2 with 200,000 iterations (legacy backups stay restorable)
+- Passwords via `MYSQL_PWD`, never visible in process lists
+- HAProxy stats bound to localhost, configurable bind IPs, optional remote root
+- Offsite replication that never syncs the encryption key
 
-### 📋 Centralized Logging
-- **Unified System**: All scripts use `lib/logging.sh` for consistent logging
-- **Color-Coded Output**: Easy-to-read INFO, SUCCESS, WARNING, ERROR messages
-- **File + Console**: Simultaneous logging to files and console
-- **Debugging Support**: Enhanced debug and trace logging capabilities
+### ⚡ Performance & Reliability
+- `--single-transaction` dumps (no table locks), multi-core compression via pigz
+- Incremental binlog sync (only new/changed files are copied)
+- Exact binlog positions parsed from the dump header (gap-free incrementals)
+- Rolling logs with size-based rotation; backup verification without plaintext on disk
 
-### 🛠️ Installation Improvements
-- **Docker Installation**: Automated Docker setup with `install-docker.sh`
-- **Password Generation**: Secure automatic password generation during setup
-- **Health Checks**: Comprehensive system validation and testing
-- **Cross-Platform**: Better Windows/Linux compatibility
+### 🛠️ Tooling
+- **Portolan integration**: collision-free ports/subnets chosen at install time
+- **Unique stack names**: several installations coexist on one host
+- **Dashboard**: live terminal view + HTML status page
+- **DB administration**: database/user/superuser provisioning with one command
 
 ## Usage
 
@@ -287,8 +288,15 @@ other nodes automatically (SQL imports go through Galera replication).
 # Full backup with verification (decrypt + integrity test after creation)
 ./backup.sh --full --verify
 
+# Backup a single database only
+./backup.sh --full --database myapp_db
+
 # Custom encryption key
 ./backup.sh --full --key /path/to/custom.key
+
+# Skip compression / checksum creation
+./backup.sh --full --no-compress
+./backup.sh --full --no-checksums
 ```
 
 #### Verify Commands
@@ -360,6 +368,7 @@ offsite sync is older than 7 days.
 ./dashboard.sh                 # live terminal dashboard (q to quit)
 ./dashboard.sh --once          # print once and exit
 ./dashboard.sh --html          # write status.html (auto-refreshing page)
+./dashboard.sh --interval 10   # refresh every 10s instead of 5s
 ```
 
 Shows server status, cluster health, database sizes, backup freshness per
@@ -504,11 +513,13 @@ mariadb-backup-system/
 
 All log files are organized in the `logs/` directory with centralized logging:
 
-- **Backup Logs**: `logs/backup.log`
-- **Restore Logs**: `logs/restore.log`
-- **Encryption Logs**: `logs/encrypt.log`
-- **Cleanup Logs**: `logs/cleanup_backups.log`, `logs/cleanup_binlogs.log`
-- **MariaDB Logs**: View with `docker logs mariadb`
+- **Backup / Restore**: `logs/backup.log`, `logs/restore.log`, `logs/verify.log`
+- **Encryption**: `logs/encrypt.log`
+- **Offsite Replication**: `logs/offsite.log`
+- **Cluster**: `logs/cluster.log`, `logs/update.log`, `logs/heal.log`
+- **Administration**: `logs/db_admin.log`, `logs/health_check.log`
+- **Cleanup**: `logs/cleanup_backups.log`, `logs/cleanup_binlogs.log`
+- **MariaDB itself**: `docker logs <container>` (e.g. `mariadb` or `<stack>-node1`)
 
 ### Centralized Logging System
 
@@ -562,8 +573,8 @@ ls -la mariadb_data/
 # Check backup logs
 tail -f logs/backup.log
 
-# Verify database connection
-docker exec mariadb mariadb -u root -p -e "SELECT 1;"
+# Verify database connection (interactive password prompt)
+docker exec -it mariadb mariadb -u root -p -e "SELECT 1;"
 
 # Check disk space
 df -h ./backups/
@@ -575,19 +586,46 @@ ls -la .backup_encryption_key
 #### Binary Logging Issues
 ```bash
 # Check binary log status
-docker exec mariadb mariadb -u root -p -e "SHOW VARIABLES LIKE 'log_bin%';"
+docker exec -it mariadb mariadb -u root -p -e "SHOW VARIABLES LIKE 'log_bin%';"
 
-# Verify binary log directory
-docker exec mariadb ls -la /var/lib/mysql/binlogs/
+# List binary logs in the container (they live in the datadir)
+docker exec mariadb sh -c "ls -la /var/lib/mysql/mysql-bin.*"
 
-# Check MariaDB binary log tools
-docker exec mariadb which mariadb-binlog
+# Check MariaDB binary log tool
+docker exec mariadb mariadb-binlog --version
+```
 
-# Test binary log processing
-docker exec mariadb /usr/bin/mariadb-binlog --version
+#### Cluster Node Won't Join (stuck at "n/a" / "not responding")
 
-# Check binary log file permissions
-docker exec mariadb ls -la /var/lib/mysql/binlogs/
+The container runs but mariadbd inside keeps failing - almost always a
+failed SST (state transfer from the donor). Diagnose first, always:
+
+```bash
+# THE most important command - the reason is in the joiner's log:
+docker logs --tail 50 <stack>-node2
+
+# Also check the donor side (node1) for SST errors:
+docker logs --tail 50 <stack>-node1 2>&1 | grep -i sst
+```
+
+Common causes and fixes:
+
+```bash
+# 1. SST auth failure (log shows "Access denied" / mariabackup errors):
+#    older installations lack the sst_user - create it on the donor:
+docker exec <stack>-node1 mariadb -u root -e "
+  CREATE USER IF NOT EXISTS 'sst_user'@'localhost' IDENTIFIED BY '<MARIADB_ROOT_PASSWORD>';
+  GRANT RELOAD, PROCESS, LOCK TABLES, BINLOG MONITOR ON *.* TO 'sst_user'@'localhost';"
+docker restart <stack>-node2
+
+# 2. Switch to rsync SST (no credentials needed at all):
+#    set GALERA_SST_METHOD=rsync in .env, then re-create the nodes:
+docker compose -f docker-compose.cluster.yml up -d --force-recreate node2 node3
+
+# 3. Fresh cluster with no data yet? Clean re-init is the fastest fix:
+docker compose -f docker-compose.cluster.yml down
+rm -rf cluster_data
+./cluster.sh init
 ```
 
 #### Restore Problems
@@ -595,38 +633,36 @@ docker exec mariadb ls -la /var/lib/mysql/binlogs/
 # Check restore logs
 tail -f logs/restore.log
 
-# Test backup file integrity
-./encrypt_backup.sh --decrypt backup_file.sql.gz.enc
+# Test backup integrity WITHOUT writing plaintext to disk
+./verify_backup.sh --database mydb
 
 # Check available space
 df -h mariadb_data/
 
-# Verify binary log compatibility
-docker exec mariadb ls -la /var/lib/mysql/binlogs/
-
-# Test restore with verbose output
-./restore.sh --verbose --debug
+# Run restore with verbose output
+./restore.sh --verbose
 ```
 
-### Error Codes
+### Error Codes (backup.sh)
 
 | Code | Description | Solution |
 |------|-------------|----------|
-| 1 | Configuration error | Check .env file and environment variables |
-| 2 | Directory creation failed | Check permissions and disk space |
-| 3 | Database connection failed | Check MariaDB status and credentials |
-| 4 | Backup operation failed | Check logs and disk space |
-| 5 | Encryption failed | Check encryption key and OpenSSL |
-| 6 | Binary log processing failed | Check mariadb-binlog tool availability |
-| 10 | Restore operation failed | Check backup file integrity and format |
-| 11 | Interactive selection failed | Check terminal capabilities |
+| 1 | `.env` missing or backups failed | Check `.env` and `logs/backup.log` |
+| 2 | Unknown command line option | See `./backup.sh --help` |
+| 3 | Directory creation failed | Check permissions and disk space |
+| 4 | Encryption key generation failed | Check OpenSSL installation |
+| 5 | Cannot connect to MariaDB container | Check container status and credentials |
+| 6 | Requested database does not exist | Check the `--database` name |
+
+`encrypt_backup.sh` uses its own codes (1-9, see `--help`); all other
+scripts exit `1` on failure with details in their log file under `logs/`.
 
 ### Getting Support
 
 1. **Check logs** in `./logs/` directory
 2. **Run health check**: `./health_check.sh --test-backup`
 3. **Review configuration**: `make config` or check `.env` file
-4. **Test restore functionality**: `./restore.sh --verbose --debug`
+4. **Verify backups**: `./verify_backup.sh --latest`
 5. **Check GitHub issues** for similar problems
 6. **Create new issue** with detailed information including:
    - Log files from `./logs/`
@@ -637,51 +673,54 @@ docker exec mariadb ls -la /var/lib/mysql/binlogs/
 ## Security Features
 
 ### Encryption
-- **Algorithm**: AES-256-CBC encryption for all backups
-- **Key Management**: Secure key storage with proper permissions (600)
-- **Key Rotation**: Support for custom encryption keys
+- **Algorithm**: AES-256-CBC with PBKDF2 key derivation (200,000 iterations;
+  older backups with legacy parameters remain restorable)
+- **Key Management**: key stored with permissions `600`, never synced offsite -
+  keep a copy in a password manager/vault
+- **No plaintext on disk**: verification decrypts in a pipe (`verify_backup.sh`)
 
 ### Access Control
-- **Database Users**: Separate users for applications and backups
-- **Network Security**: Configurable bind addresses
-- **File Permissions**: Secure file and directory permissions
+- **Database Users**: separate per-database users; remote root optional
+  (`MARIADB_ROOT_REMOTE=no` disables it)
+- **Network Security**: configurable bind IPs (`MARIADB_BIND_IP`); HAProxy
+  stats bound to localhost by default; passwords passed via `MYSQL_PWD`,
+  never on command lines
+- **File Permissions**: secure file and directory permissions
 
 ### Backup Integrity
 - **Checksums**: SHA-256 verification for all backup files
-- **Validation**: Automatic backup verification during restore
-- **Atomic Operations**: Transaction-based restore operations
+- **Validation**: checksum verified before every decrypt/restore;
+  `--verify` tests decryptability right after backup creation
+- **Offsite copies**: `offsite_sync.sh --verify` refuses to replicate
+  backups that fail verification
 
 ## Monitoring & Maintenance
 
-### Log Files
-- `logs/backup.log` - Backup operations and status
-- `logs/restore.log` - Restore operations and results
-- `logs/cleanup.log` - Cleanup operations
-- `logs/encrypt.log` - Encryption/decryption operations
-
 ### Health Monitoring
 ```bash
+# Live dashboard (terminal or HTML)
+make dashboard
+make dashboard-html
+
 # Run comprehensive health check
 make health
 
 # Check specific components
 docker logs mariadb                    # MariaDB logs
-docker exec mariadb mariadb -e "SHOW STATUS;"  # Database status
+./cluster.sh status                    # Cluster health (cluster mode)
 ```
 
 ### Backup Verification
 ```bash
-# Verify backup integrity using encryption tool
-find backups -name "*.enc" -exec ./encrypt_backup.sh --decrypt {} \; -exec rm -f {}.decrypted \;
+# Verify ALL backups safely (checksum + decrypt + gzip test, no plaintext on disk)
+make verify
 
-# Check backup statistics with improved format
+# Only the latest backup per database (fast, ideal for cron)
+make verify-latest
+
+# Statistics and listings
 make backup-stats
-
-# List recent backups with detailed information
 make list-backups
-
-# Test restore process without actually restoring
-./restore.sh --verbose --debug --database test_db 2>&1 | head -50
 ```
 
 ### Performance Tuning
@@ -689,38 +728,41 @@ make list-backups
 Adjust MariaDB settings in `my_custom.cnf`:
 
 ```ini
-# For high-memory systems
+# For high-memory systems (rule of thumb: ~70% of available RAM)
 innodb_buffer_pool_size = 2048M
-innodb_buffer_pool_instances = 8
+innodb_log_file_size = 256M
 
 # For high-traffic systems
 max_connections = 2000
 thread_cache_size = 256
 ```
 
+For full durability (at the cost of write performance) set
+`sync_binlog = 1` and `innodb_flush_log_at_trx_commit = 1` - the shipped
+defaults favor performance because backups + cluster replication exist.
+
 ### Backup Scheduling
 
-Set up automated backups with Windows Task Scheduler or cron (WSL/Linux):
+Set up automated backups with cron (the self-healing cron job is installed
+automatically by `./install.sh --cluster`):
 
-#### Windows Task Scheduler
-```powershell
-# Create a scheduled task for daily full backup
-schtasks /create /tn "MariaDB Full Backup" /tr "powershell.exe -Command 'cd C:\path\to\mariadb-backup-system; .\backup.sh --full'" /sc daily /st 02:00
-
-# Create incremental backup task
-schtasks /create /tn "MariaDB Incremental Backup" /tr "powershell.exe -Command 'cd C:\path\to\mariadb-backup-system; .\backup.sh'" /sc daily /st 06:00,12:00,18:00
-```
-
-#### Linux/WSL Cron
 ```bash
 # Edit crontab
 crontab -e
 
-# Add backup schedule
-0 2 * * * cd /path/to/mariadb-backup-system && ./backup.sh --full
+# Recommended schedule
+0 2 * * *      cd /path/to/mariadb-backup-system && ./backup.sh --full
 0 6,12,18 * * * cd /path/to/mariadb-backup-system && ./backup.sh --incremental
-0 3 * * 0 cd /path/to/mariadb-backup-system && ./cleanup_backups.sh
+30 2 * * *     cd /path/to/mariadb-backup-system && ./verify_backup.sh --latest
+0 3 * * *      cd /path/to/mariadb-backup-system && ./offsite_sync.sh --verify
+0 4 * * 0      cd /path/to/mariadb-backup-system && ./cleanup_backups.sh && ./cleanup_binlogs.sh && ./log_cleanup.sh
 ```
+
+Tip: set `OFFSITE_AUTO=yes` in `.env` instead of the offsite cron line to
+replicate immediately after every backup.
+
+On Windows, run the scripts via WSL (`wsl -e bash -c "cd /path && ./backup.sh --full"`)
+in the Task Scheduler - the shell scripts require a POSIX environment.
 
 ## Contributing
 
@@ -748,8 +790,10 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
-**⚠️ Important Notes**: 
-- Always test backup and restore procedures before relying on them in production!
-- The restore system now uses `/usr/bin/mariadb-binlog` instead of the legacy `mysqlbinlog`
-- Interactive restore mode provides better user experience for database selection
-- Point-in-time recovery requires properly configured binary logging
+**⚠️ Important Notes**:
+- Always test backup **and restore** procedures before relying on them in production!
+- Store `.backup_encryption_key` in a second safe place (password manager/vault) -
+  without it, no backup can ever be restored
+- Point-in-time recovery requires properly configured binary logging (enabled by default)
+- Restoring overwrites the target database - the script asks for confirmation
+  unless `--yes` is passed

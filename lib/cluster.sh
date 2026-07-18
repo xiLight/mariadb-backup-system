@@ -54,22 +54,35 @@ cluster_size() {
   node_wsrep "$1" wsrep_cluster_size
 }
 
-# Wait until a node is synced with the cluster (polls every 5s)
+# Wait until a node is synced with the cluster (polls every 5s).
+# Prints progress on state changes and the container log on failure,
+# so a broken join is diagnosable immediately.
 wait_node_synced() {
   local node="$1" timeout="${2:-$CLUSTER_SYNC_TIMEOUT}"
-  local waited=0
+  local container waited=0 state last_state=""
+  container=$(node_container "$node")
 
-  log_info "Waiting for $(node_container "$node") to become Synced (timeout: ${timeout}s)..."
+  log_info "Waiting for $container to become Synced (timeout: ${timeout}s)..."
   while (( waited < timeout )); do
     if node_running "$node" && node_is_synced "$node"; then
-      log_success "$(node_container "$node") is Synced (cluster size: $(cluster_size "$node"))"
+      log_success "$container is Synced (cluster size: $(cluster_size "$node"))"
       return 0
     fi
+
+    state=$(node_wsrep "$node" wsrep_local_state_comment)
+    [[ -z "$state" ]] && state="starting/not responding"
+    if [[ "$state" != "$last_state" ]]; then
+      log_info "  $container: $state"
+      last_state="$state"
+    fi
+
     sleep 5
     waited=$((waited + 5))
   done
 
-  log_error "$(node_container "$node") did not reach Synced state within ${timeout}s"
+  log_error "$container did not reach Synced state within ${timeout}s"
+  log_error "Last container log lines (look for SST/wsrep errors):"
+  docker logs --tail 20 "$container" 2>&1 | sed 's/^/    /'
   return 1
 }
 

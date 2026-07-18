@@ -42,6 +42,7 @@ x-node-env: &node-env
   GALERA_ENABLED: "yes"
   GALERA_CLUSTER_NAME: ${GALERA_CLUSTER_NAME:-mariadb-galera}
   GALERA_CLUSTER_ADDRESS: gcomm://node1,node2,node3
+  GALERA_SST_METHOD: ${GALERA_SST_METHOD:-mariabackup}
 
 services:
   node1:

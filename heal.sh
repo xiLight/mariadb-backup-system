@@ -177,7 +177,7 @@ heal_once() {
     fi
 
     strikes=$(add_strike "$node")
-    log_warning "$container is unhealthy (state: ${state:-not responding}, strike $strikes/$STRIKE_LIMIT)"
+    log_warning "$container is unhealthy (state: ${state:-not responding}, strike $strikes/$STRIKE_LIMIT) - diagnose with: docker logs --tail 30 $container"
 
     if (( strikes >= STRIKE_LIMIT )); then
       log_warning "Restarting $container after $STRIKE_LIMIT failed checks"

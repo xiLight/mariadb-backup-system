@@ -10,9 +10,10 @@ wsrep_cluster_address = ${GALERA_CLUSTER_ADDRESS}
 wsrep_node_name = ${GALERA_NODE_NAME}
 wsrep_node_address = ${GALERA_NODE_ADDRESS}
 
-# State snapshot transfer: mariabackup keeps the donor node writable
-wsrep_sst_method = mariabackup
-wsrep_sst_auth = root:${MARIADB_ROOT_PASSWORD}
+# State snapshot transfer: mariabackup keeps the donor node writable,
+# rsync needs no credentials but blocks the donor during transfer
+wsrep_sst_method = ${GALERA_SST_METHOD}
+wsrep_sst_auth = sst_user:${MARIADB_ROOT_PASSWORD}
 wsrep_slave_threads = 4
 
 # Galera requirements
