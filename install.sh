@@ -48,14 +48,15 @@ install_portolan() {
         return 0
     fi
 
-    # Portolan needs sqlite3; make+git for building/installing
-    if ! command -v sqlite3 &> /dev/null || ! command -v make &> /dev/null; then
+    # Portolan needs sqlite3; make+git for building/installing.
+    # pigz is optional: backup.sh uses it for multi-core compression.
+    if ! command -v sqlite3 &> /dev/null || ! command -v make &> /dev/null || ! command -v pigz &> /dev/null; then
         if command -v apt-get &> /dev/null; then
-            log_info "Installing Portolan dependencies (sqlite3, make)..."
+            log_info "Installing dependencies (sqlite3, make, pigz)..."
             run_privileged apt-get update -qq
-            run_privileged apt-get install -y -qq sqlite3 make
+            run_privileged apt-get install -y -qq sqlite3 make pigz
         else
-            log_warning "Cannot auto-install sqlite3/make (no apt-get). Install them manually."
+            log_warning "Cannot auto-install sqlite3/make/pigz (no apt-get). Install them manually."
         fi
     fi
 

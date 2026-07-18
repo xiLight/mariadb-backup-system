@@ -1,4 +1,4 @@
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 # Install MariaDB from the official MariaDB repository
 RUN apt-get update && \

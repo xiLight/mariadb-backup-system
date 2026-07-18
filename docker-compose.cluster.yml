@@ -25,6 +25,7 @@ x-node-common: &node-common
 
 x-node-env: &node-env
   MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+  MARIADB_ROOT_REMOTE: ${MARIADB_ROOT_REMOTE:-yes}
   MARIADB_DATABASE1: ${MARIADB_DATABASE1}
   MARIADB_DATABASE2: ${MARIADB_DATABASE2}
   MARIADB_DATABASE3: ${MARIADB_DATABASE3}
@@ -103,8 +104,10 @@ services:
     container_name: ${STACK_NAME:-mariadb}-haproxy
     restart: unless-stopped
     ports:
-      - "${HAPROXY_PORT:-3306}:3306"
-      - "${HAPROXY_STATS_PORT:-8404}:8404"
+      - "${MARIADB_BIND_IP:-0.0.0.0}:${HAPROXY_PORT:-3306}:3306"
+      # Stats page shows cluster internals - localhost only by default,
+      # reach it remotely via SSH tunnel or set HAPROXY_STATS_BIND_IP
+      - "${HAPROXY_STATS_BIND_IP:-127.0.0.1}:${HAPROXY_STATS_PORT:-8404}:8404"
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     networks:

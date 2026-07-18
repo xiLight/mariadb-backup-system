@@ -128,7 +128,18 @@ if [ ! -d "$DATADIR/mysql" ]; then
 
   # Create databases and users for external access
   log_info "Creating databases and users for external access..."
-  
+
+  # Remote root is convenient but a large attack surface -
+  # disable with MARIADB_ROOT_REMOTE=no (admin then via 'docker exec' only)
+  ROOT_REMOTE_SQL=""
+  if [ "${MARIADB_ROOT_REMOTE:-yes}" = "yes" ]; then
+    ROOT_REMOTE_SQL="CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY '$MARIADB_ROOT_PASSWORD';
+GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
+GRANT RELOAD, REPLICATION CLIENT, BINLOG MONITOR, BINLOG REPLAY ON *.* TO 'root'@'%';"
+  else
+    log_info "MARIADB_ROOT_REMOTE=no - root will only be accessible from inside the container"
+  fi
+
   mariadb --protocol=socket --socket=/run/mysqld/mysqld.sock -u root <<EOF
 -- Create databases first
 CREATE DATABASE IF NOT EXISTS \`$MARIADB_DATABASE1\`;
@@ -138,11 +149,8 @@ CREATE DATABASE IF NOT EXISTS \`$MARIADB_DATABASE4\`;
 CREATE DATABASE IF NOT EXISTS \`$MARIADB_DATABASE5\`;
 
 -- Keep root@localhost without password for backup scripts
--- Only set password for external root access
-
--- Enable root access from external hosts
-CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY '$MARIADB_ROOT_PASSWORD';
-GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
+-- Remote root access (optional, see MARIADB_ROOT_REMOTE)
+$ROOT_REMOTE_SQL
 
 -- Create database-specific users for external access
 CREATE USER IF NOT EXISTS '$MARIADB_DATABASE1'@'%' IDENTIFIED BY '$DATABASE1_PASSWORD';
@@ -170,7 +178,6 @@ GRANT ALL PRIVILEGES ON \`$MARIADB_DATABASE5\`.* TO '$MARIADB_USER'@'%';
 
 -- Grant binlog privileges
 GRANT RELOAD, REPLICATION CLIENT, BINLOG MONITOR, BINLOG REPLAY ON *.* TO '$MARIADB_USER'@'%';
-GRANT RELOAD, REPLICATION CLIENT, BINLOG MONITOR, BINLOG REPLAY ON *.* TO 'root'@'%';
 
 -- Passwordless check user for HAProxy health checks (no privileges granted)
 CREATE USER IF NOT EXISTS 'haproxy_check'@'%';
@@ -184,12 +191,12 @@ EOF
     handle_error "Failed to create databases and users"
   fi
 
-  # Verify databases were created
+  # Verify databases were created (password via env, not process list)
   log_info "Verifying created databases:"
-  mariadb --protocol=socket --socket=/run/mysqld/mysqld.sock -u root -p"$MARIADB_ROOT_PASSWORD" -e "SHOW DATABASES;" | grep -E "^($MARIADB_DATABASE1|$MARIADB_DATABASE2|$MARIADB_DATABASE3|$MARIADB_DATABASE4|$MARIADB_DATABASE5)$"
+  MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb --protocol=socket --socket=/run/mysqld/mysqld.sock -u root -e "SHOW DATABASES;" | grep -E "^($MARIADB_DATABASE1|$MARIADB_DATABASE2|$MARIADB_DATABASE3|$MARIADB_DATABASE4|$MARIADB_DATABASE5)$"
 
   log_info "Verifying created users:"
-  mariadb --protocol=socket --socket=/run/mysqld/mysqld.sock -u root -p"$MARIADB_ROOT_PASSWORD" -e "SELECT User, Host FROM mysql.user WHERE User NOT IN ('', 'mysql.sys', 'mysql.session', 'mysql.infoschema') ORDER BY User, Host;"
+  MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb --protocol=socket --socket=/run/mysqld/mysqld.sock -u root -e "SELECT User, Host FROM mysql.user WHERE User NOT IN ('', 'mysql.sys', 'mysql.session', 'mysql.infoschema') ORDER BY User, Host;"
 
   # Stop the temporary MariaDB instance
   log_info "Stopping temporary MariaDB instance..."

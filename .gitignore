@@ -13,6 +13,9 @@ cluster_data/
 backups/
 logs/
 
+# Generated dashboard
+status.html
+
 # Temporary files
 *.tmp
 *.temp

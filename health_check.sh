@@ -189,6 +189,33 @@ check_recent_backups() {
     return 0
 }
 
+check_offsite_sync() {
+    log_info "Checking offsite replication..."
+
+    if [ -z "$OFFSITE_TARGET" ]; then
+        log_warning "Offsite replication not configured (OFFSITE_TARGET empty)"
+        log_info "A disk failure would lose the database AND all backups - see offsite_sync.sh"
+        return 0
+    fi
+
+    if [ ! -f "./logs/.last_offsite_sync" ]; then
+        log_warning "Offsite target configured but no sync has run yet - run: ./offsite_sync.sh"
+        return 1
+    fi
+
+    local last_sync age_days
+    last_sync=$(cat ./logs/.last_offsite_sync 2>/dev/null || echo 0)
+    age_days=$(( ($(date +%s) - last_sync) / 86400 ))
+
+    if [ "$age_days" -ge 7 ]; then
+        log_warning "Last offsite sync is $age_days days old - check offsite_sync.sh / its cron job"
+        return 1
+    fi
+
+    log_success "Offsite replication is current (last sync: $age_days day(s) ago)"
+    return 0
+}
+
 check_disk_space() {
     log_info "Checking disk space..."
 
@@ -263,6 +290,7 @@ main() {
     check_scripts || OVERALL_STATUS=1
     check_encryption_key || OVERALL_STATUS=1
     check_recent_backups || OVERALL_STATUS=1
+    check_offsite_sync || OVERALL_STATUS=1
     check_disk_space || OVERALL_STATUS=1
     run_backup_test "$1" || OVERALL_STATUS=1
 

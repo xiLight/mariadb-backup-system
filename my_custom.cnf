@@ -11,7 +11,6 @@ thread_cache_size = 128
 
 # InnoDB settings
 innodb_buffer_pool_size = 1024M
-innodb_buffer_pool_instances = 4
 innodb_log_file_size = 128M
 innodb_log_buffer_size = 64M
 innodb_flush_log_at_trx_commit = 2
@@ -21,10 +20,10 @@ innodb_read_io_threads = 4
 innodb_write_io_threads = 4
 innodb_io_capacity = 400
 
-# Query cache
-query_cache_size = 64M
-query_cache_limit = 2M
-query_cache_type = 1
+# Query cache disabled: causes mutex contention under concurrent load
+# and is not supported with Galera. InnoDB buffer pool does the caching.
+query_cache_size = 0
+query_cache_type = 0
 
 # Binlog settings
 server-id = 1

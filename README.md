@@ -4,14 +4,18 @@ A comprehensive Docker-based MariaDB backup solution with encryption, binary log
 
 ## Features
 
-- 🔒 **Encrypted Backups** - All backups are automatically encrypted using AES-256
+- 🔒 **Encrypted Backups** - AES-256-CBC with PBKDF2 (200k iterations), SHA-256 checksums
 - 📊 **Binary Log Support** - Point-in-time recovery with MariaDB binary logs
-- 🔄 **Automated Cleanup** - Configurable retention policies for backups and logs
-- 🐳 **Docker Ready** - Complete Docker Compose setup included
-- 📈 **Monitoring** - Comprehensive logging with centralized system
-- 🚀 **Easy Setup** - One-command installation and configuration
-- 🔧 **Interactive Tools** - User-friendly interactive restore and backup selection
-- 📋 **Health Checks** - Built-in system monitoring and validation
+- ✅ **Backup Verification** - decrypt + integrity test without touching the database
+- ☁️ **Offsite Replication** - rsync/rclone to a second host, key never leaves the server
+- 🌐 **HA Cluster (optional)** - 3-node Galera multi-master, HAProxy failover, self-healing
+- 🔁 **Rolling Updates** - zero-downtime updates, one node at a time
+- ⚓ **Portolan Integration** - collision-free ports/subnets picked automatically at install
+- 🔄 **Automated Cleanup** - configurable retention for backups, binlogs, and rolling logs
+- 📈 **Dashboard** - live terminal dashboard + HTML status page
+- 🛠️ **DB Administration** - create databases/users/superusers with one command
+- 🚀 **Easy Setup** - one command installs everything incl. cron jobs
+- 📋 **Health Checks** - built-in system monitoring and validation
 
 ## Quick Start
 
@@ -56,91 +60,38 @@ The installer does everything - after it finishes, the system is ready to use:
    cron job** (`./heal.sh` every minute) - no manual steps needed
 5. Runs an initial backup test
 
-### 2. Configure Environment
+### 2. Manual Setup (without installer)
 
 ```bash
 # Copy and edit the environment file
 cp .env.example .env
-# Edit .env with your settings (see Configuration section)
-```
 
-### 3. Start MariaDB
-
-```bash
+# Start MariaDB
 docker compose up -d
 ```
 
-### 4. Run Your First Backup
+### 3. Run Your First Backup
 
 ```bash
-# Full backup with empty databases included
-./backup.sh --full --include-empty
-
-# Incremental backup with empty databases included
-./backup.sh --incremental --include-empty
+./backup.sh --full                    # full backup
+./backup.sh --full --include-empty    # include databases without tables
+./backup.sh --incremental             # binlog-based incremental backup
 ```
 
-```bash
-./backup.sh --full
-```
-
-This creates:
-- A compressed SQL dump of the entire database
-- A binlog info file with the current position
-- Backup of all existing binlog files
+A full backup creates:
+- A compressed, encrypted SQL dump per database
+- A binlog info file with the exact position (for incrementals/PITR)
+- A synced copy of all binlog files
 - SHA-256 checksums for all backup files
-
-### 3. Creating an Incremental Backup
-
-```bash
-./backup.sh --incremental
-```
-
-This only backs up new binlog files since the last backup.
 
 ### 4. Restoring from Backup
 
-Interactive restore (select database and backup):
 ```bash
-./restore.sh
+./restore.sh                                        # interactive selection
+./restore.sh --database ALL                         # all DBs from their latest backup
+./restore.sh --database mydb --last                 # one DB, latest backup
+./restore.sh --to-timestamp "YYYY-MM-DD HH:MM:SS"   # point-in-time recovery
 ```
-
-Restore all databases automatically:
-```bash
-./restore.sh --database ALL --backup-file LATEST
-```
-
-### 5. Point-in-Time Recovery
-
-```bash
-./restore.sh --to-timestamp "YYYY-MM-DD HH:MM:SS"
-```
-
-Restores the database to the state at the specified timestamp using binary log replay.
-
-### 6. Encrypting Backups
-
-```bash
-./encrypt_backup.sh --encrypt backups/db_full_2023-01-01_12-00-00.sql.gz
-```
-
-Encrypts the backup file using AES-256 encryption.
-
-### 7. Decrypting Backups
-
-```bash
-./encrypt_backup.sh --decrypt backups/db_full_2023-01-01_12-00-00.sql.gz.enc
-```
-
-Decrypts a previously encrypted backup file.
-
-### 8. Cleanup
-
-```bash
-./cleanup_backups.sh
-```
-
-Deletes backups older than the specified retention period.
 
 ## Configuration
 
@@ -149,17 +100,33 @@ Deletes backups older than the specified retention period.
 | Variable | Description | Example | Required |
 |----------|-------------|---------|----------|
 | `MARIADB_ROOT_PASSWORD` | Root password for MariaDB | `your_secure_password` | Yes |
+| `MARIADB_ROOT_REMOTE` | Allow root login from outside the container | `yes` / `no` | No |
 | `MARIADB_DATABASE1-5` | Database names to create | `myapp_db` | No |
 | `MARIADB_USER` | Application user | `app_user` | Yes |
 | `MARIADB_PASSWORD` | Application user password | `app_password` | Yes |
 | `DATABASE1-5_PASSWORD` | Individual DB passwords | `db_password` | No |
-| `MARIADB_CONTAINER` | Container name | `mariadb` | No |
+| `STACK_NAME` | Unique prefix for containers/image per installation | `shop` | No |
+| `MARIADB_CONTAINER` | Container name (set by installer) | `mariadb` | No |
+| `MARIADB_PORT` | Host port (single node; filled via Portolan) | `3306` | No |
+| `MARIADB_BIND_IP` | Interface to publish the DB port on | `0.0.0.0` | No |
 | `BACKUP_DIR` | Backup storage directory | `./backups` | No |
 | `BINLOG_DIR` | Binary log backup directory | `./backups/binlogs` | No |
 | `BACKUP_KEEP_GENERATIONS` | Full backup generations to keep per DB | `7` | No |
+| `OFFSITE_METHOD` | Offsite sync tool | `rsync` / `rclone` | No |
+| `OFFSITE_TARGET` | Offsite destination | `user@host:/backups` | No |
+| `OFFSITE_AUTO` | Sync automatically after each backup | `no` | No |
+| `OFFSITE_DELETE` | Mirror local retention to the remote | `no` | No |
+| `OFFSITE_BWLIMIT` | Bandwidth limit (rsync: KB/s) | `5000` | No |
 | `LOG_MAX_SIZE_KB` | Rotate logs when they exceed this size | `5120` | No |
 | `LOG_KEEP` | Number of rotated log files to keep | `5` | No |
 | `LOG_RETENTION_DAYS` | Delete rotated logs older than this | `14` | No |
+| `GALERA_CLUSTER_NAME` | Galera cluster name (cluster mode) | `mariadb-galera` | No |
+| `GALERA_SUBNET` | Cluster network subnet (filled via Portolan) | `172.20.0.0/24` | No |
+| `HAPROXY_PORT` | HAProxy MariaDB port (cluster mode) | `3306` | No |
+| `HAPROXY_STATS_PORT` | HAProxy stats dashboard port | `8404` | No |
+| `HAPROXY_STATS_BIND_IP` | Stats page binding (localhost by default) | `127.0.0.1` | No |
+| `CLUSTER_SYNC_TIMEOUT` | Max seconds for a node to resync | `600` | No |
+| `HEAL_INTERVAL` | Check interval for `heal.sh --daemon` | `30` | No |
 | `TZ` | Timezone | `Europe/Berlin` | No |
 
 ### MariaDB Configuration (my_custom.cnf)
@@ -179,7 +146,8 @@ expire_logs_days = 30
 
 # Performance optimizations
 innodb_buffer_pool_size = 1024M
-query_cache_size = 64M
+# Query cache is disabled (mutex contention, unsupported with Galera)
+query_cache_size = 0
 ```
 
 ## High Availability: Galera Cluster (3 Nodes)
@@ -364,6 +332,41 @@ other nodes automatically (SQL imports go through Galera replication).
 > **Note:** Restoring overwrites the target database. The script asks for
 > confirmation unless `--yes` is passed.
 
+#### Offsite Replication
+
+```bash
+# Configure the target in .env first:
+#   OFFSITE_TARGET=user@backuphost:/backups/mariadb   (rsync over SSH)
+#   OFFSITE_METHOD=rclone + OFFSITE_TARGET=remote:dir (any rclone backend)
+
+./offsite_sync.sh --dry-run    # preview what would be transferred
+./offsite_sync.sh --verify     # verify latest backups, then sync
+make offsite                   # same as --verify
+
+# Or fully automatic after every backup:
+#   OFFSITE_AUTO=yes in .env
+```
+
+Why: with backups only on the same disk, a disk failure or compromise loses
+the database **and** its backups. The offsite copy closes that gap. The
+encryption key is **never synced** - store `.backup_encryption_key`
+separately (password manager/vault); without it the offsite files are
+useless to anyone who obtains them. `health_check.sh` warns when the last
+offsite sync is older than 7 days.
+
+#### Dashboard
+
+```bash
+./dashboard.sh                 # live terminal dashboard (q to quit)
+./dashboard.sh --once          # print once and exit
+./dashboard.sh --html          # write status.html (auto-refreshing page)
+```
+
+Shows server status, cluster health, database sizes, backup freshness per
+database, disk usage, and recent backup/heal activity. The HTML page is a
+local file (not served) - access it remotely via SSH tunnel instead of
+exposing DB internals: `ssh -L 8000:localhost:8000 server` + any local server.
+
 #### Database Administration
 
 ```bash
@@ -411,29 +414,47 @@ changes replicate to every node automatically.
 #### Using Make (Recommended)
 
 ```bash
-# Show all available commands
-make help
+make help            # Show all available commands
 
-# Quick setup
-make install
+# Setup & container management
+make install         # Full installation (portolan, .env, cron, start)
+make env             # Create .env with generated passwords
+make start / stop / restart / status / build
 
-# Container management
-make start
-make stop
-make restart
-make status
-
-# Backup operations
-make backup          # Incremental
+# Backup & verify
+make backup          # Incremental backup
 make backup-full     # Full backup
-make backup-empty    # Full with empty DBs
+make backup-empty    # Full backup incl. empty DBs
 make verify          # Verify all backups
 make verify-latest   # Verify latest backup per DB
+make restore         # Interactive restore
+make offsite         # Verify + replicate backups offsite
+make offsite-dry     # Preview offsite sync
 
-# Maintenance
-make cleanup         # Clean backups and logs
+# Galera cluster (HA)
+make cluster-init    # First-time 3-node cluster setup
+make cluster-start / cluster-stop / cluster-status
+make update          # Rolling update (git pull + node by node)
+make heal            # One self-healing check
+make heal-daemon     # Continuous self-healing
+
+# Database administration
+make database NAME=mydb      # Create database
+make user NAME=myuser        # Create user
+make provision NAME=myapp    # DB + user + grants in one step
+make superuser NAME=admin    # Superuser (all databases)
+make list-db                 # List databases and users
+
+# Monitoring & maintenance
+make dashboard       # Live terminal dashboard
+make dashboard-html  # Write status.html
 make health          # Health check
-make logs            # View MariaDB logs
+make health-test     # Health check incl. backup test
+make cleanup         # Clean old backups + rotate logs
+make cleanup-logs-all # Truncate all logs
+make logs / logs-backup / logs-follow
+make list-backups / backup-stats / disk-usage
+make mariadb         # Open a MariaDB shell
 ```
 
 ## Directory Structure
@@ -441,33 +462,42 @@ make logs            # View MariaDB logs
 ```
 mariadb-backup-system/
 ├── 📁 .github/                 # GitHub workflows and templates
-│   ├── workflows/ci.yml        # CI/CD pipeline
-│   └── ISSUE_TEMPLATE/         # Issue templates
-├── 📄 docker-compose.yml       # Docker Compose configuration
-├── 📄 Dockerfile.mariadb      # Custom MariaDB image
-├── 📄 my_custom.cnf           # MariaDB configuration
-├── 📄 entrypoint.sh           # MariaDB startup script
-├── 📄 .env.example            # Environment template
-├── 📄 install.sh              # Installation script
-├── 📄 install-docker.sh       # Docker installation script
-├── 📄 Makefile                # Make commands
-├── 📄 health_check.sh         # System health check
-├── 🔧 backup.sh               # Main backup script
-├── 🔧 restore.sh              # Restore script with interactive selection
-├── 🔧 encrypt_backup.sh       # Encryption utilities
-├── 🔧 verify_backup.sh        # Backup integrity verification
-├── 🔧 cleanup_backups.sh      # Backup cleanup
-├── 🔧 cleanup_binlogs.sh      # Binary log cleanup
-├── 🔧 log_cleanup.sh          # Log rotation and cleanup
-├── 📁 lib/                    # Shared libraries
-│   └── logging.sh             # Centralized logging system
-├── 📁 backups/                # Backup storage
-│   ├── binlogs/               # Binary log backups
-│   ├── checksums/             # Backup checksums
-│   ├── incr/                  # Incremental backup info
-│   └── binlog_info/           # Binary log positions
-├── 📁 logs/                   # Application logs
-└── 📁 mariadb_data/           # MariaDB data (created by Docker)
+├── 📄 docker-compose.yml       # Single-node Docker Compose
+├── 📄 docker-compose.cluster.yml # 3-node Galera cluster + HAProxy
+├── 📄 Dockerfile.mariadb       # Custom MariaDB image (incl. Galera)
+├── 📄 my_custom.cnf            # MariaDB configuration
+├── 📄 galera.cnf.template      # Per-node Galera config (rendered by entrypoint)
+├── 📄 haproxy.cfg              # HAProxy failover configuration
+├── 📄 entrypoint.sh            # MariaDB startup script
+├── 📄 .env.example             # Environment template
+├── 📄 install.sh               # Installer (Portolan, mode, cron, start)
+├── 📄 install-docker.sh        # Docker installation script
+├── 📄 Makefile                 # Make commands
+├── 🔧 backup.sh                # Main backup script
+├── 🔧 restore.sh               # Restore with interactive selection
+├── 🔧 encrypt_backup.sh        # Encryption utilities
+├── 🔧 verify_backup.sh         # Backup integrity verification
+├── 🔧 offsite_sync.sh          # Offsite replication (rsync/rclone)
+├── 🔧 cluster.sh               # Cluster init/start/stop/status
+├── 🔧 update.sh                # Rolling updates (zero downtime)
+├── 🔧 heal.sh                  # Self-healing (cron/daemon)
+├── 🔧 db_admin.sh              # Database/user administration
+├── 🔧 dashboard.sh             # Terminal + HTML dashboard
+├── 🔧 health_check.sh          # System health check
+├── 🔧 cleanup_backups.sh       # Backup retention cleanup
+├── 🔧 cleanup_binlogs.sh       # Binary log cleanup
+├── 🔧 log_cleanup.sh           # Log rotation and cleanup
+├── 📁 lib/
+│   ├── logging.sh              # Central logging with rolling logs
+│   └── cluster.sh              # Shared cluster helpers
+├── 📁 backups/                 # Backup storage
+│   ├── binlogs/                # Binary log backups
+│   ├── checksums/              # SHA-256 checksums
+│   ├── incr/                   # Incremental backup info
+│   └── binlog_info/            # Binary log positions
+├── 📁 logs/                    # Application logs (rotated)
+├── 📁 mariadb_data/            # Single-node data (created by Docker)
+└── 📁 cluster_data/            # Cluster node data (node1/2/3)
 ```
 
 ## Logs

@@ -1,6 +1,6 @@
 # MariaDB Backup System Makefile
 
-.PHONY: help install env start stop restart status backup backup-full backup-incremental restore verify cleanup health logs clean build database user provision superuser list-db
+.PHONY: help install env start stop restart status backup backup-full backup-incremental restore verify cleanup health logs clean build database user provision superuser list-db dashboard dashboard-html offsite offsite-dry
 
 # Default target
 help:
@@ -21,6 +21,8 @@ help:
 	@echo "  make backup-empty     - Create full backup including empty DBs"
 	@echo "  make verify           - Verify integrity of all backups"
 	@echo "  make verify-latest    - Verify latest backup per database"
+	@echo "  make offsite          - Replicate backups to offsite target"
+	@echo "  make offsite-dry      - Preview offsite sync without transferring"
 	@echo ""
 	@echo "Database Administration:"
 	@echo "  make database         - Create a database          (NAME=mydb)"
@@ -35,6 +37,8 @@ help:
 	@echo "  make cleanup-logs     - Clean old logs only"
 	@echo ""
 	@echo "Monitoring:"
+	@echo "  make dashboard        - Live terminal dashboard"
+	@echo "  make dashboard-html   - Write status.html (auto-refreshing)"
 	@echo "  make logs             - Show MariaDB logs"
 	@echo "  make logs-backup      - Show backup logs"
 	@echo "  make logs-follow      - Follow MariaDB logs"
@@ -188,6 +192,13 @@ verify-latest:
 	@echo "Verifying latest backups..."
 	@./verify_backup.sh --latest
 
+# Offsite replication
+offsite:
+	@./offsite_sync.sh --verify
+
+offsite-dry:
+	@./offsite_sync.sh --dry-run
+
 # Cleanup operations
 cleanup: cleanup-backups cleanup-logs
 
@@ -204,6 +215,12 @@ cleanup-logs-all:
 	@./log_cleanup.sh --all
 
 # Health and monitoring
+dashboard:
+	@./dashboard.sh
+
+dashboard-html:
+	@./dashboard.sh --html status.html
+
 health:
 	@echo "Running health check..."
 	@./health_check.sh

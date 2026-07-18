@@ -14,6 +14,10 @@ KEY_FILE=".backup_encryption_key"
 CHECKSUM_DIR="./backups/checksums"
 CREATE_CHECKSUM=true
 
+# PBKDF2 iteration count for key derivation. Decryption falls back to
+# OpenSSL's default (10000) so backups made before this hardening still work.
+PBKDF2_ITER=200000
+
 handle_error() {
   local exit_code=$1
   shift
@@ -102,7 +106,7 @@ if [[ "$ACTION" == "encrypt" ]]; then
   OUTPUT_FILE="${FILE}.enc"
   log_info "Encrypting: $FILE -> $OUTPUT_FILE"
 
-  openssl enc -aes-256-cbc -salt -pbkdf2 -in "$FILE" -out "$OUTPUT_FILE" -pass file:"$KEY_FILE" ||
+  openssl enc -aes-256-cbc -salt -pbkdf2 -iter "$PBKDF2_ITER" -in "$FILE" -out "$OUTPUT_FILE" -pass file:"$KEY_FILE" ||
     handle_error 6 "Encryption failed"
 
   if [[ "$CREATE_CHECKSUM" == "true" ]]; then
@@ -136,8 +140,12 @@ elif [[ "$ACTION" == "decrypt" ]]; then
     fi
   fi
 
-  openssl enc -aes-256-cbc -d -pbkdf2 -in "$FILE" -out "$OUTPUT_FILE" -pass file:"$KEY_FILE" ||
-    handle_error 9 "Decryption failed. Is the key correct?"
+  if ! openssl enc -aes-256-cbc -d -pbkdf2 -iter "$PBKDF2_ITER" -in "$FILE" -out "$OUTPUT_FILE" -pass file:"$KEY_FILE" 2>/dev/null; then
+    log_info "Trying legacy decryption parameters (backup from before iteration hardening)..."
+    rm -f "$OUTPUT_FILE"
+    openssl enc -aes-256-cbc -d -pbkdf2 -in "$FILE" -out "$OUTPUT_FILE" -pass file:"$KEY_FILE" ||
+      { rm -f "$OUTPUT_FILE"; handle_error 9 "Decryption failed. Is the key correct?"; }
+  fi
 
   log_success "Decryption completed successfully"
 fi

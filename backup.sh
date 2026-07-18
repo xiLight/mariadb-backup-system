@@ -104,6 +104,13 @@ done
 BACKUP_START_TIME=$(date +%s)
 log_info "Starting backup process (version $BACKUP_VERSION), mode: $BACKUP_MODE"
 
+# pigz compresses on all CPU cores and produces standard gzip output
+if command -v pigz &>/dev/null; then
+  COMPRESS_CMD="pigz"
+else
+  COMPRESS_CMD="gzip"
+fi
+
 for dir in "$BACKUP_DIR" "$BINLOG_BACKUP_DIR" "$BINLOG_INFO_DIR" "$CHECKSUM_DIR" "$INCR_INFO_DIR"; do
   mkdir -p "$dir" || handle_error 3 "Failed to create directory: $dir"
 done
@@ -198,35 +205,52 @@ save_binlog_position() {
   log_success "Binary log position saved for $database: $file:$pos"
 }
 
-# Copy all binlog files from the container into the local backup directory.
+# Copy binlog files from the container into the local backup directory.
+# Incremental: files that already exist locally with the same size are
+# skipped, so only new/growing binlogs are transferred.
 sync_binlogs() {
   log_info "Syncing binary logs from container..."
-  local files
-  files=$(docker exec "$MARIADB_CONTAINER" sh -c "ls $CONTAINER_DATADIR/mysql-bin.* 2>/dev/null")
-  if [[ -z "$files" ]]; then
+  local listing
+  listing=$(docker exec "$MARIADB_CONTAINER" sh -c "stat -c '%s %n' $CONTAINER_DATADIR/mysql-bin.* 2>/dev/null")
+  if [[ -z "$listing" ]]; then
     log_warning "No binary logs found in container. Incremental backups will not work until binary logging is enabled."
     return 1
   fi
 
-  local count=0 f
-  while IFS= read -r f; do
-    if docker cp "$MARIADB_CONTAINER:$f" "$BINLOG_BACKUP_DIR/" >/dev/null 2>&1; then
-      count=$((count + 1))
-    else
-      log_warning "Failed to copy binlog: $(basename "$f")"
+  local copied=0 skipped=0 size f name local_size
+  while read -r size f; do
+    [[ -n "$f" ]] || continue
+    name=$(basename "$f")
+
+    if [[ -f "$BINLOG_BACKUP_DIR/$name" ]]; then
+      local_size=$(stat -c%s "$BINLOG_BACKUP_DIR/$name" 2>/dev/null || stat -f%z "$BINLOG_BACKUP_DIR/$name" 2>/dev/null || echo -1)
+      if [[ "$local_size" == "$size" ]]; then
+        skipped=$((skipped + 1))
+        continue
+      fi
     fi
-  done <<< "$files"
-  log_success "Synced $count binary log file(s) to $BINLOG_BACKUP_DIR"
+
+    if docker cp "$MARIADB_CONTAINER:$f" "$BINLOG_BACKUP_DIR/" >/dev/null 2>&1; then
+      copied=$((copied + 1))
+    else
+      log_warning "Failed to copy binlog: $name"
+    fi
+  done <<< "$listing"
+  log_success "Binlog sync: $copied copied, $skipped unchanged"
 }
 
 # Decrypt + integrity-test an encrypted backup without writing plaintext to disk.
+# Tries hardened PBKDF2 iterations first, then legacy default for old backups.
 verify_backup_file() {
-  local enc_file="$1"
-  if [[ "$COMPRESS_BACKUPS" == "true" ]]; then
-    openssl enc -aes-256-cbc -d -pbkdf2 -in "$enc_file" -pass file:"$ENCRYPT_KEY_FILE" 2>/dev/null | gzip -t 2>/dev/null
-  else
-    openssl enc -aes-256-cbc -d -pbkdf2 -in "$enc_file" -pass file:"$ENCRYPT_KEY_FILE" 2>/dev/null | head -c 1 | grep -q .
-  fi
+  local enc_file="$1" iter_opts
+  for iter_opts in "-iter 200000" ""; do
+    if [[ "$COMPRESS_BACKUPS" == "true" ]]; then
+      openssl enc -aes-256-cbc -d -pbkdf2 $iter_opts -in "$enc_file" -pass file:"$ENCRYPT_KEY_FILE" 2>/dev/null | gzip -t 2>/dev/null && return 0
+    else
+      openssl enc -aes-256-cbc -d -pbkdf2 $iter_opts -in "$enc_file" -pass file:"$ENCRYPT_KEY_FILE" 2>/dev/null | head -c 1 | grep -q . && return 0
+    fi
+  done
+  return 1
 }
 
 # --- Collect databases ----------------------------------------------------
@@ -366,7 +390,7 @@ for DB in "${DATABASES[@]}"; do
   TOTAL_BACKUP_SIZE=$((TOTAL_BACKUP_SIZE + BACKUP_SIZE))
 
   if [[ "$COMPRESS_BACKUPS" == "true" ]]; then
-    if gzip "$BACKUP_FILE"; then
+    if "$COMPRESS_CMD" "$BACKUP_FILE"; then
       BACKUP_FILE="${BACKUP_FILE}.gz"
     else
       log_error "Failed to compress backup for $DB"
@@ -441,3 +465,14 @@ if [[ $FAILED_BACKUPS -gt 0 ]]; then
 fi
 
 log_success "All backups completed successfully! Encrypted files stored in: $BACKUP_DIR"
+
+# Optional offsite replication after a fully successful run
+if [[ "${OFFSITE_AUTO:-no}" == "yes" && $SUCCESSFUL_BACKUPS -gt 0 ]]; then
+  log_info "OFFSITE_AUTO enabled - replicating backups offsite..."
+  if ./offsite_sync.sh; then
+    log_success "Offsite replication completed"
+  else
+    log_error "Offsite replication failed - backups exist locally but are NOT replicated"
+    exit 1
+  fi
+fi

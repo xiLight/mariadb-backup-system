@@ -7,6 +7,7 @@ services:
     restart: unless-stopped
     environment:
       MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_ROOT_REMOTE: ${MARIADB_ROOT_REMOTE:-yes}
       MARIADB_DATABASE1: ${MARIADB_DATABASE1}
       MARIADB_DATABASE2: ${MARIADB_DATABASE2}
       MARIADB_DATABASE3: ${MARIADB_DATABASE3}
@@ -27,7 +28,7 @@ services:
       - ./lib:/usr/local/lib:ro
     entrypoint: ["/usr/local/bin/entrypoint.sh"]
     ports:
-      - "${MARIADB_PORT:-3306}:3306"
+      - "${MARIADB_BIND_IP:-0.0.0.0}:${MARIADB_PORT:-3306}:3306"
     networks:
       - web
     logging:

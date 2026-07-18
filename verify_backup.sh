@@ -121,7 +121,15 @@ for BACKUP_FILE in "${BACKUP_FILES[@]}"; do
   fi
   [[ "$CHECKSUM_RESULT" == "none" ]] && NO_CHECKSUM=$((NO_CHECKSUM + 1))
 
-  if openssl enc -aes-256-cbc -d -pbkdf2 -in "$BACKUP_FILE" -pass file:"$ENCRYPT_KEY_FILE" 2>/dev/null | gzip -t 2>/dev/null; then
+  DECRYPT_OK=false
+  for ITER_OPTS in "-iter 200000" ""; do
+    if openssl enc -aes-256-cbc -d -pbkdf2 $ITER_OPTS -in "$BACKUP_FILE" -pass file:"$ENCRYPT_KEY_FILE" 2>/dev/null | gzip -t 2>/dev/null; then
+      DECRYPT_OK=true
+      break
+    fi
+  done
+
+  if [[ "$DECRYPT_OK" == "true" ]]; then
     log_success "$NAME: OK$([ "$CHECKSUM_RESULT" == "none" ] && echo " (no checksum on file)")"
     VERIFIED=$((VERIFIED + 1))
   else
