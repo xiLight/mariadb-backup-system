@@ -146,6 +146,25 @@ check_scripts() {
     return 0
 }
 
+check_env_permissions() {
+    log_info "Checking .env permissions..."
+
+    if [ ! -f ".env" ]; then
+        return 0
+    fi
+
+    ENV_PERMS=$(stat -c "%a" .env 2>/dev/null || stat -f "%A" .env 2>/dev/null)
+    if [ "$ENV_PERMS" = "600" ]; then
+        log_success ".env has correct permissions (600)"
+    else
+        log_warning ".env permissions: $ENV_PERMS (contains all passwords - fixing to 600)"
+        chmod 600 .env
+        log_info "Fixed .env permissions"
+    fi
+
+    return 0
+}
+
 check_encryption_key() {
     log_info "Checking encryption key..."
 
@@ -288,6 +307,7 @@ main() {
     check_bind_address || OVERALL_STATUS=1
     check_backup_directories || OVERALL_STATUS=1
     check_scripts || OVERALL_STATUS=1
+    check_env_permissions || OVERALL_STATUS=1
     check_encryption_key || OVERALL_STATUS=1
     check_recent_backups || OVERALL_STATUS=1
     check_offsite_sync || OVERALL_STATUS=1

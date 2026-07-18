@@ -22,6 +22,8 @@ usage() {
   echo "  reinit [--yes]  Tear down and rebuild the cluster from scratch:"
   echo "                  fetches a fresh subnet via Portolan, DELETES all cluster"
   echo "                  data, then runs a clean init"
+  echo "  drill           Controlled failover test: stops node1, verifies the"
+  echo "                  cluster keeps serving, brings node1 back"
   echo ""
   echo "Rolling updates: ./update.sh | Self-healing: ./heal.sh"
   exit 0
@@ -172,6 +174,54 @@ cmd_reinit() {
   fi
 }
 
+# Controlled failover drill: proves that the cluster survives losing node1
+# and that HAProxy fails over. Run quarterly, outside peak hours.
+cmd_drill() {
+  if [[ $(cluster_healthy_count) -ne 3 ]]; then
+    log_error "Drill requires a fully healthy cluster (3/3 synced) - aborting"
+    print_cluster_status
+    exit 1
+  fi
+
+  log_warning "Failover drill: node1 will be stopped for ~30 seconds"
+  read -p "Continue? (type 'yes' to confirm): " confirm
+  if [[ "$confirm" != "yes" ]]; then
+    log_info "Drill cancelled"
+    exit 0
+  fi
+
+  log_info "Stopping $(node_container node1)..."
+  docker stop "$(node_container node1)" >/dev/null
+
+  sleep 15
+
+  # The cluster must stay primary and reachable through HAProxy
+  local drill_ok=true
+  if [[ $(cluster_healthy_count) -ne 2 ]]; then
+    log_error "Expected 2/3 healthy nodes during drill, got $(cluster_healthy_count)"
+    drill_ok=false
+  fi
+
+  # haproxy_check has no privileges but may log in - perfect for a probe
+  if docker exec "$(node_container node2)" mariadb -h haproxy -u haproxy_check -e "SELECT 1;" >/dev/null 2>&1; then
+    log_success "HAProxy failover works: queries are served without node1"
+  else
+    log_error "Query through HAProxy FAILED during node1 outage"
+    drill_ok=false
+  fi
+
+  log_info "Bringing node1 back..."
+  docker start "$(node_container node1)" >/dev/null
+  wait_node_synced node1 || drill_ok=false
+
+  if [[ "$drill_ok" == "true" ]]; then
+    log_success "=== DRILL PASSED: failover and recovery work as designed ==="
+  else
+    log_error "=== DRILL FAILED - investigate before relying on failover ==="
+    exit 1
+  fi
+}
+
 cmd_status() {
   print_cluster_status
 
@@ -198,5 +248,6 @@ case "$1" in
   stop)   cmd_stop ;;
   status) cmd_status ;;
   reinit) shift; cmd_reinit "$@" ;;
+  drill)  cmd_drill ;;
   *)      usage ;;
 esac

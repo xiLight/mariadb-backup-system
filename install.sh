@@ -136,6 +136,22 @@ configure_network_with_portolan() {
         log_warning "Port 8404 is taken - using Portolan's suggestion: $stats_port"
     fi
 
+    # Read-only round-robin port - prefer 3309
+    local read_port=3309
+    if ! portolan_port_ok 3309 mariadb-read; then
+        read_port=$(portolan next-ports 1 3310 2>/dev/null | head -1)
+        [[ "$read_port" =~ ^[0-9]+$ ]] || read_port=3309
+        log_warning "Port 3309 is taken - using Portolan's suggestion: $read_port"
+    fi
+
+    # TLS port - prefer 3316
+    local tls_port=3316
+    if ! portolan_port_ok 3316 mariadb-tls; then
+        tls_port=$(portolan next-ports 1 3317 2>/dev/null | head -1)
+        [[ "$tls_port" =~ ^[0-9]+$ ]] || tls_port=3316
+        log_warning "Port 3316 is taken - using Portolan's suggestion: $tls_port"
+    fi
+
     # Collision-free subnet for the Galera cluster network
     # (strip whitespace/ANSI codes so the validation regex is reliable)
     local galera_subnet
@@ -144,6 +160,8 @@ configure_network_with_portolan() {
     set_env_value MARIADB_PORT "$db_port"
     set_env_value HAPROXY_PORT "$db_port"
     set_env_value HAPROXY_STATS_PORT "$stats_port"
+    set_env_value HAPROXY_READ_PORT "$read_port"
+    set_env_value HAPROXY_TLS_PORT "$tls_port"
     if [[ "$galera_subnet" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]]; then
         set_env_value GALERA_SUBNET "$galera_subnet"
         log_success "Galera cluster subnet: $galera_subnet"
@@ -155,8 +173,10 @@ configure_network_with_portolan() {
     # Book the resources in Portolan's registry
     portolan reserve "$db_port" mariadb "mariadb-backup-system" &> /dev/null || true
     portolan reserve "$stats_port" haproxy-stats "mariadb-backup-system stats" &> /dev/null || true
+    portolan reserve "$read_port" mariadb-read "mariadb-backup-system read pool" &> /dev/null || true
+    portolan reserve "$tls_port" mariadb-tls "mariadb-backup-system TLS" &> /dev/null || true
 
-    log_success "Ports configured: MariaDB/HAProxy=$db_port, HAProxy stats=$stats_port"
+    log_success "Ports configured: write=$db_port, read=$read_port, tls=$tls_port, stats=$stats_port"
 }
 
 # Check prerequisites

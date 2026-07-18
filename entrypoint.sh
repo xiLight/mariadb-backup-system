@@ -92,7 +92,11 @@ if [ ! -d "$DATADIR/mysql" ]; then
 
   # Joiner nodes get all data via state transfer (SST) from the cluster,
   # so the SQL initialization below only runs on standalone or bootstrap nodes.
-  if [ "$GALERA_ENABLED" = "yes" ] && [ -z "$WSREP_NEW_CLUSTER" ]; then
+  # SKIP_PROVISION=yes skips it too (used by restore_test.sh for throwaway
+  # instances that only need a bare server with socket root access).
+  if [ "$SKIP_PROVISION" = "yes" ]; then
+    log_info "SKIP_PROVISION=yes: skipping SQL initialization (bare instance)"
+  elif [ "$GALERA_ENABLED" = "yes" ] && [ -z "$WSREP_NEW_CLUSTER" ]; then
     log_info "Galera joiner node: skipping SQL initialization (data comes via SST)"
   else
 

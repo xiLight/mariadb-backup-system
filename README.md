@@ -111,18 +111,25 @@ A full backup creates:
 | `MARIADB_BIND_IP` | Interface to publish the DB port on | `0.0.0.0` | No |
 | `BACKUP_DIR` | Backup storage directory | `./backups` | No |
 | `BINLOG_DIR` | Binary log backup directory | `./backups/binlogs` | No |
-| `BACKUP_KEEP_GENERATIONS` | Full backup generations to keep per DB | `7` | No |
+| `BACKUP_RETENTION_MODE` | `generations` or `gfs` (daily/weekly/monthly) | `gfs` | No |
+| `BACKUP_KEEP_GENERATIONS` | generations mode: fulls to keep per DB | `7` | No |
+| `BACKUP_KEEP_DAILY/WEEKLY/MONTHLY` | gfs mode: archives per tier | `7`/`4`/`12` | No |
 | `OFFSITE_METHOD` | Offsite sync tool | `rsync` / `rclone` | No |
 | `OFFSITE_TARGET` | Offsite destination | `user@host:/backups` | No |
 | `OFFSITE_AUTO` | Sync automatically after each backup | `no` | No |
 | `OFFSITE_DELETE` | Mirror local retention to the remote | `no` | No |
+| `OFFSITE_ENCRYPT_BINLOGS` | Encrypt binlogs before replication | `yes` | No |
 | `OFFSITE_BWLIMIT` | Bandwidth limit (rsync: KB/s) | `5000` | No |
+| `NOTIFY_NTFY_URL` / `NOTIFY_DISCORD_WEBHOOK` / `NOTIFY_TELEGRAM_*` | Alert channels | - | No |
+| `HEARTBEAT_URL` | Uptime-Kuma push URL (backup heartbeat) | - | No |
 | `LOG_MAX_SIZE_KB` | Rotate logs when they exceed this size | `5120` | No |
 | `LOG_KEEP` | Number of rotated log files to keep | `5` | No |
 | `LOG_RETENTION_DAYS` | Delete rotated logs older than this | `14` | No |
 | `GALERA_CLUSTER_NAME` | Galera cluster name (cluster mode) | `mariadb-galera` | No |
 | `GALERA_SUBNET` | Cluster network subnet (filled via Portolan) | `172.20.0.0/24` | No |
-| `HAPROXY_PORT` | HAProxy MariaDB port (cluster mode) | `3306` | No |
+| `HAPROXY_PORT` | HAProxy write port (cluster mode) | `3306` | No |
+| `HAPROXY_READ_PORT` | Read-only round-robin port | `3309` | No |
+| `HAPROXY_TLS_PORT` | TLS port (after tls_setup.sh) | `3316` | No |
 | `HAPROXY_STATS_PORT` | HAProxy stats dashboard port | `8404` | No |
 | `HAPROXY_STATS_BIND_IP` | Stats page binding (localhost by default) | `127.0.0.1` | No |
 | `CLUSTER_SYNC_TIMEOUT` | Max seconds for a node to resync | `600` | No |
@@ -186,7 +193,43 @@ unchanged - the cluster lives in its own compose file.
 ./cluster.sh reinit        # or: make cluster-reinit
 ```
 
-Connect your applications to `localhost:3306` (HAProxy) - failover is transparent.
+Connect your applications to the HAProxy ports (see `.env` for actual values):
+
+| Port | Purpose |
+|---|---|
+| `HAPROXY_PORT` (default 3306) | **Writes + reads** - single-writer routing with automatic failover |
+| `HAPROXY_READ_PORT` (default 3309) | **Read-only** - round-robin across ALL nodes for read scaling |
+| `HAPROXY_TLS_PORT` (default 3316) | TLS-encrypted connections (after `./tls_setup.sh`) |
+
+### TLS for Client Connections
+
+```bash
+./tls_setup.sh                       # own CA + cert, enables the TLS listener
+./tls_setup.sh --domain db.example.com
+./tls_setup.sh --import fullchain.pem key.pem   # reuse Coolify/Traefik/Caddy/certbot certs
+./tls_setup.sh --status              # or: make tls-status
+```
+
+The script detects reverse proxies (Traefik/Caddy/Coolify) occupying ports
+80/443 and recommends importing their certificates instead of ACME. TLS is
+terminated in HAProxy; node-to-node traffic stays on the isolated cluster
+network. Clients connect with:
+
+```bash
+mariadb --host <server> --port 3316 --ssl --ssl-ca tls/ca.pem -u <user> -p
+```
+
+`tls/ca.pem` is public and safe to distribute; the key files never leave the
+server. Imported certs must be re-imported after renewal (cron-able).
+
+### Failover Drill
+
+```bash
+./cluster.sh drill        # or: make drill
+```
+
+Stops node1 in a controlled way, proves that HAProxy fails over and queries
+keep working, then brings node1 back and waits for full sync. Run quarterly.
 
 ### Rolling Updates (zero downtime)
 
@@ -344,6 +387,49 @@ other nodes automatically (SQL imports go through Galera replication).
 > **Note:** Restoring overwrites the target database. The script asks for
 > confirmation unless `--yes` is passed.
 
+#### Restore Drill (prove backups are restorable)
+
+```bash
+./restore_test.sh                  # or: make restore-test
+./restore_test.sh --database mydb  # test one database only
+./restore_test.sh --keep           # keep the test container for inspection
+```
+
+Imports the latest backup of every database into a **throwaway container**
+(isolated via `--network none` - the live database is never touched) and
+verifies tables exist. This proves the full chain dump → encrypt → decrypt →
+import. Recommended weekly via cron; failures trigger a notification.
+
+#### Notifications
+
+```bash
+./notify.sh --test                 # or: make notify-test
+```
+
+Configure any of these in `.env` - failures in backup/heal/offsite/restore-test
+notify automatically:
+
+| Variable | Channel |
+|---|---|
+| `NOTIFY_NTFY_URL` | ntfy topic (e.g. `https://ntfy.sh/my-topic`) |
+| `NOTIFY_DISCORD_WEBHOOK` | Discord webhook |
+| `NOTIFY_TELEGRAM_BOT_TOKEN` + `NOTIFY_TELEGRAM_CHAT_ID` | Telegram bot |
+| `HEARTBEAT_URL` | Uptime-Kuma push URL, pinged after every successful backup |
+
+The heartbeat inverts the logic: your monitor alarms when backups *stop*
+happening - this also catches a dead cron.
+
+#### Users & Grants
+
+Full backups automatically include an encrypted dump of all users and grants
+(`system_grants_full_*.sql.gz.enc`) - without it, a total server loss would
+lose every account created after installation.
+
+```bash
+./restore.sh --database ALL --with-grants   # restore everything incl. accounts
+./restore.sh --grants-only                  # restore ONLY users/grants
+```
+
 #### Offsite Replication
 
 ```bash
@@ -365,6 +451,11 @@ encryption key is **never synced** - store `.backup_encryption_key`
 separately (password manager/vault); without it the offsite files are
 useless to anyone who obtains them. `health_check.sh` warns when the last
 offsite sync is older than 7 days.
+
+Binlogs (which contain all data changes in plaintext) are **encrypted before
+replication** (`OFFSITE_ENCRYPT_BINLOGS=yes`, incremental staging in
+`backups/binlogs_enc/`); the plaintext `binlogs/` directory never leaves the
+server. Decrypt offsite binlogs with `./encrypt_backup.sh --decrypt`.
 
 #### Dashboard
 
@@ -405,7 +496,10 @@ changes replicate to every node automatically.
 #### Maintenance Commands
 
 ```bash
-# Clean old backups (keeps last BACKUP_KEEP_GENERATIONS full backups per DB, default 7)
+# Clean old backups - two retention modes (BACKUP_RETENTION_MODE in .env):
+#   generations: keep the last N full backups per DB
+#   gfs:         keep 7 daily + 4 weekly + 12 monthly archives (long history,
+#                little storage; binlog roll-forward covers the daily window)
 ./cleanup_backups.sh
 
 # Clean binary logs no longer needed by any kept backup
@@ -770,6 +864,7 @@ crontab -e
 0 6,12,18 * * * cd /path/to/mariadb-backup-system && ./backup.sh --incremental
 30 2 * * *     cd /path/to/mariadb-backup-system && ./verify_backup.sh --latest
 0 3 * * *      cd /path/to/mariadb-backup-system && ./offsite_sync.sh --verify
+0 5 * * 0      cd /path/to/mariadb-backup-system && ./restore_test.sh
 0 4 * * 0      cd /path/to/mariadb-backup-system && ./cleanup_backups.sh && ./cleanup_binlogs.sh && ./log_cleanup.sh
 ```
 

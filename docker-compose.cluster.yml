@@ -106,11 +106,16 @@ services:
     restart: unless-stopped
     ports:
       - "${MARIADB_BIND_IP:-0.0.0.0}:${HAPROXY_PORT:-3306}:3306"
+      # Read-only round-robin across all nodes (read scaling)
+      - "${MARIADB_BIND_IP:-0.0.0.0}:${HAPROXY_READ_PORT:-3309}:3307"
+      # TLS listener (active after ./tls_setup.sh)
+      - "${MARIADB_BIND_IP:-0.0.0.0}:${HAPROXY_TLS_PORT:-3316}:3316"
       # Stats page shows cluster internals - localhost only by default,
       # reach it remotely via SSH tunnel or set HAPROXY_STATS_BIND_IP
       - "${HAPROXY_STATS_BIND_IP:-127.0.0.1}:${HAPROXY_STATS_PORT:-8404}:8404"
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./tls:/usr/local/etc/haproxy/tls:ro
     networks:
       - galera
       - web

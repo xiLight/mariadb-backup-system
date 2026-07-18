@@ -30,6 +30,8 @@ OFFSITE_METHOD="${OFFSITE_METHOD:-rsync}"
 OFFSITE_TARGET="${OFFSITE_TARGET:-}"
 OFFSITE_DELETE="${OFFSITE_DELETE:-no}"
 OFFSITE_BWLIMIT="${OFFSITE_BWLIMIT:-}"
+OFFSITE_ENCRYPT_BINLOGS="${OFFSITE_ENCRYPT_BINLOGS:-yes}"
+ENCRYPT_KEY_FILE=".backup_encryption_key"
 STATE_FILE="./logs/.last_offsite_sync"
 
 DRY_RUN=false
@@ -92,8 +94,49 @@ if [[ "$VERIFY_FIRST" == "true" ]]; then
   log_success "Verification passed"
 fi
 
+# The SQL dumps are encrypted, but the binlog copies contain the same data
+# in PLAINTEXT. For offsite they are mirrored into binlogs_enc/ (encrypted,
+# incremental by mtime) and the plaintext binlogs/ dir is excluded.
+stage_encrypted_binlogs() {
+  local src="$BACKUP_DIR/binlogs" dst="$BACKUP_DIR/binlogs_enc"
+  [[ -d "$src" ]] || return 0
+  mkdir -p "$dst"
+
+  local bl enc staged=0
+  for bl in "$src"/mysql-bin.*; do
+    [[ -f "$bl" ]] || continue
+    enc="$dst/$(basename "$bl").enc"
+    if [[ ! -f "$enc" || "$bl" -nt "$enc" ]]; then
+      if openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 -in "$bl" -out "$enc" -pass file:"$ENCRYPT_KEY_FILE" 2>/dev/null; then
+        staged=$((staged + 1))
+      else
+        log_warning "Failed to encrypt binlog for offsite: $(basename "$bl")"
+        rm -f "$enc"
+      fi
+    fi
+  done
+
+  # Prune encrypted copies whose source binlog was cleaned up
+  for enc in "$dst"/mysql-bin.*.enc; do
+    [[ -f "$enc" ]] || continue
+    bl="$src/$(basename "$enc" .enc)"
+    [[ -f "$bl" ]] || rm -f "$enc"
+  done
+
+  log_info "Binlog offsite staging: $staged newly encrypted (decrypt with encrypt_backup.sh --decrypt)"
+}
+
 SYNC_START=$(date +%s)
 log_info "Starting offsite sync: $BACKUP_DIR -> $OFFSITE_TARGET (method: $OFFSITE_METHOD)"
+
+EXTRA_EXCLUDES=()
+if [[ "$OFFSITE_ENCRYPT_BINLOGS" == "yes" ]]; then
+  [[ -f "$ENCRYPT_KEY_FILE" ]] || { log_error "Encryption key not found: $ENCRYPT_KEY_FILE"; exit 1; }
+  stage_encrypted_binlogs
+  EXTRA_EXCLUDES=(binlogs)
+else
+  log_warning "OFFSITE_ENCRYPT_BINLOGS=no - binlogs will be replicated in PLAINTEXT"
+fi
 
 case "$OFFSITE_METHOD" in
   rsync)
@@ -104,6 +147,9 @@ case "$OFFSITE_METHOD" in
     [[ "$OFFSITE_DELETE" == "yes" ]] && RSYNC_ARGS+=(--delete)
     [[ -n "$OFFSITE_BWLIMIT" ]] && RSYNC_ARGS+=(--bwlimit="$OFFSITE_BWLIMIT")
     RSYNC_ARGS+=(--exclude=".*")
+    for excl in "${EXTRA_EXCLUDES[@]}"; do
+      RSYNC_ARGS+=(--exclude="$excl")
+    done
 
     if rsync "${RSYNC_ARGS[@]}" "$BACKUP_DIR/" "$OFFSITE_TARGET/" 2>&1 | tail -5; then
       SYNC_OK=true
@@ -119,6 +165,9 @@ case "$OFFSITE_METHOD" in
     RCLONE_ARGS=("$RCLONE_CMD" "$BACKUP_DIR" "$OFFSITE_TARGET" --exclude ".*")
     [[ "$DRY_RUN" == "true" ]] && RCLONE_ARGS+=(--dry-run)
     [[ -n "$OFFSITE_BWLIMIT" ]] && RCLONE_ARGS+=(--bwlimit "$OFFSITE_BWLIMIT")
+    for excl in "${EXTRA_EXCLUDES[@]}"; do
+      RCLONE_ARGS+=(--exclude "${excl}/**")
+    done
 
     if rclone "${RCLONE_ARGS[@]}" 2>&1 | tail -5; then
       SYNC_OK=true
@@ -136,6 +185,7 @@ SYNC_DURATION=$(( $(date +%s) - SYNC_START ))
 
 if [[ "$SYNC_OK" != "true" ]]; then
   log_error "Offsite sync FAILED after ${SYNC_DURATION}s - backups are NOT replicated"
+  [[ -x ./notify.sh ]] && ./notify.sh error "Offsite sync FAILED" "Backups could not be replicated to $OFFSITE_TARGET. They exist locally only!" || true
   exit 1
 fi
 

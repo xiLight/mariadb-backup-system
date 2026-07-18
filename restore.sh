@@ -44,7 +44,7 @@ get_databases_with_backups() {
   for backup_file in "$BACKUP_DIR"/*_full_*.sql.gz.enc; do
     [[ -f "$backup_file" ]] || continue
     db_name=$(basename "$backup_file" | sed 's/_full_.*//')
-    if [[ ! " ${dbs[*]} " =~ " ${db_name} " ]] && [[ "$db_name" != "binlogs" ]]; then
+    if [[ ! " ${dbs[*]} " =~ " ${db_name} " ]] && [[ "$db_name" != "binlogs" ]] && [[ "$db_name" != "system_grants" ]]; then
       dbs+=("$db_name")
     fi
   done
@@ -139,6 +139,8 @@ DATABASE=""
 BACKUP_FILE=""
 RESTORE_TO_TIMESTAMP=""
 SKIP_CONFIRM=false
+RESTORE_GRANTS=false
+GRANTS_ONLY=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -165,6 +167,16 @@ while [[ $# -gt 0 ]]; do
       SKIP_CONFIRM=true
       shift
       ;;
+    --with-grants)
+      RESTORE_GRANTS=true
+      shift
+      ;;
+    --grants-only)
+      RESTORE_GRANTS=true
+      GRANTS_ONLY=true
+      INTERACTIVE_SELECT=false
+      shift
+      ;;
     --verbose)
       VERBOSE=true
       shift
@@ -181,6 +193,8 @@ while [[ $# -gt 0 ]]; do
       echo "  --backup-file FILE     Specify backup file path"
       echo "  --last                 Use the most recent backup (requires --database)"
       echo "  --to-timestamp TS      Restore up to specific timestamp (YYYY-MM-DD HH:MM:SS)"
+      echo "  --with-grants          Also restore users and grants from the latest grants backup"
+      echo "  --grants-only          Restore ONLY users and grants, no databases"
       echo "  --yes                  Skip the confirmation prompt"
       echo "  --verbose              Enable verbose output"
       echo "  --help                 Show this help message"
@@ -242,7 +256,9 @@ if [[ "$USE_LAST_BACKUP" == "true" ]]; then
   fi
 fi
 
-if [[ "$DATABASE" == "ALL" ]]; then
+if [[ "$GRANTS_ONLY" == "true" ]]; then
+  DBS_TO_RESTORE=()
+elif [[ "$DATABASE" == "ALL" ]]; then
   DBS_TO_RESTORE=( $(get_databases_with_backups) )
   log_info "Restoring all databases: ${DBS_TO_RESTORE[*]}"
 else
@@ -252,7 +268,11 @@ fi
 # Restoring overwrites live data - make sure the user really wants this.
 if [[ "$SKIP_CONFIRM" != "true" ]]; then
   echo "" >&2
-  log_warning "This will OVERWRITE the following database(s) in container '$MARIADB_CONTAINER': ${DBS_TO_RESTORE[*]}"
+  if [[ "$GRANTS_ONLY" == "true" ]]; then
+    log_warning "This will restore users and grants into container '$MARIADB_CONTAINER'"
+  else
+    log_warning "This will OVERWRITE the following database(s) in container '$MARIADB_CONTAINER': ${DBS_TO_RESTORE[*]}$([ "$RESTORE_GRANTS" == "true" ] && echo " (+ users/grants)")"
+  fi
   read -p "Continue? (type 'yes' to confirm): " confirm
   if [[ "$confirm" != "yes" ]]; then
     log_info "Restore cancelled by user"
@@ -386,6 +406,29 @@ for DB_TO_RESTORE in "${DBS_TO_RESTORE[@]}"; do
     docker exec "$MARIADB_CONTAINER" rm -f "/tmp/binlogs/$bl_name"
   done
 done
+
+# --- Users & grants -------------------------------------------------------
+if [[ "$RESTORE_GRANTS" == "true" ]]; then
+  log_info "Restoring users and grants..."
+  GRANTS_BACKUP=$(ls -1t "$BACKUP_DIR"/system_grants_full_*.sql.gz.enc 2>/dev/null | head -1)
+
+  if [[ -z "$GRANTS_BACKUP" ]]; then
+    log_warning "No grants backup found (system_grants_full_*.sql.gz.enc) - run a full backup first"
+  elif ./encrypt_backup.sh --decrypt "$GRANTS_BACKUP" --key "$ENCRYPT_KEY_FILE"; then
+    GRANTS_DECRYPTED="${GRANTS_BACKUP%.enc}"
+    # --force: existing users produce errors that are safe to skip
+    if gunzip -c "$GRANTS_DECRYPTED" | db_exec_stdin --force 2>/dev/null; then
+      db_exec -e "FLUSH PRIVILEGES;"
+      log_success "Users and grants restored from $(basename "$GRANTS_BACKUP")"
+      PROCESSED_DATABASES=$((PROCESSED_DATABASES + 1))
+    else
+      log_error "Failed to import users/grants"
+    fi
+    rm -f "$GRANTS_DECRYPTED"
+  else
+    log_error "Failed to decrypt grants backup"
+  fi
+fi
 
 RESTORE_DURATION=$(( $(date +%s) - RESTORE_START_TIME ))
 

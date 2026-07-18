@@ -112,6 +112,7 @@ full_cluster_recovery() {
   if ! wait_node_synced "$bootstrap_node"; then
     log_error "Bootstrap node $(node_container "$bootstrap_node") failed to start - manual intervention required"
     log_error "Check: docker logs $(node_container "$bootstrap_node")"
+    [[ -x ./notify.sh ]] && ./notify.sh error "Cluster recovery FAILED" "Full cluster recovery could not bootstrap $(node_container "$bootstrap_node") - manual intervention required!" || true
     return 1
   fi
 
@@ -129,6 +130,7 @@ full_cluster_recovery() {
 
   compose_cluster up -d haproxy
   log_success "=== Cluster recovery completed ==="
+  [[ -x ./notify.sh ]] && ./notify.sh warning "Cluster recovered" "The whole cluster was down and has been recovered automatically (bootstrapped from $(node_container "$bootstrap_node"))." || true
 }
 
 heal_once() {
@@ -186,6 +188,7 @@ heal_once() {
       log_warning "Restarting $container after $STRIKE_LIMIT failed checks"
       docker restart "$container" >/dev/null 2>&1 || compose_cluster up -d "$node"
       clear_strikes "$node"
+      [[ -x ./notify.sh ]] && ./notify.sh warning "Self-healing: node restarted" "$container was unhealthy (state: ${state:-not responding}) and has been restarted automatically." || true
     fi
   done
 

@@ -1,6 +1,6 @@
 # MariaDB Backup System Makefile
 
-.PHONY: help install env start stop restart status backup backup-full backup-incremental restore verify cleanup health logs clean build database user provision superuser list-db dashboard dashboard-html offsite offsite-dry cluster-reinit
+.PHONY: help install env start stop restart status backup backup-full backup-incremental restore verify cleanup health logs clean build database user provision superuser list-db dashboard dashboard-html offsite offsite-dry cluster-reinit restore-test notify-test tls tls-status drill
 
 # Default target
 help:
@@ -23,6 +23,10 @@ help:
 	@echo "  make verify-latest    - Verify latest backup per database"
 	@echo "  make offsite          - Replicate backups to offsite target"
 	@echo "  make offsite-dry      - Preview offsite sync without transferring"
+	@echo "  make restore-test     - Restore drill in a throwaway container"
+	@echo "  make notify-test      - Send a test notification to all channels"
+	@echo "  make tls              - Enable TLS (self-signed) on HAProxy"
+	@echo "  make drill            - Controlled cluster failover test"
 	@echo ""
 	@echo "Database Administration:"
 	@echo "  make database         - Create a database          (NAME=mydb)"
@@ -202,6 +206,22 @@ offsite:
 
 offsite-dry:
 	@./offsite_sync.sh --dry-run
+
+# Restore drill, notifications, TLS, failover test
+restore-test:
+	@./restore_test.sh
+
+notify-test:
+	@./notify.sh --test
+
+tls:
+	@./tls_setup.sh --self-signed
+
+tls-status:
+	@./tls_setup.sh --status
+
+drill:
+	@./cluster.sh drill
 
 # Cleanup operations
 cleanup: cleanup-backups cleanup-logs

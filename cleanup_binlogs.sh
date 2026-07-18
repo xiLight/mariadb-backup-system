@@ -15,6 +15,9 @@ BINLOG_DIR="${BINLOG_DIR:-$BACKUP_DIR/binlogs}"
 BINLOG_INFO_DIR="${BINLOG_INFO_DIR:-$BACKUP_DIR/binlog_info}"
 INCR_INFO_DIR="${INCR_INFO_DIR:-$BACKUP_DIR/incr}"
 KEEP_GENERATIONS="${BACKUP_KEEP_GENERATIONS:-7}"
+# GFS mode: binlog roll-forward only makes sense within the daily window -
+# weekly/monthly archives are restored as-is without binlog replay
+[[ "${BACKUP_RETENTION_MODE:-generations}" == "gfs" ]] && KEEP_GENERATIONS="${BACKUP_KEEP_DAILY:-7}"
 MARIADB_CONTAINER="${MARIADB_CONTAINER:-mariadb}"
 
 mkdir -p "$BACKUP_DIR" "$BINLOG_DIR" "$BINLOG_INFO_DIR" "$INCR_INFO_DIR" 2>/dev/null

@@ -3,9 +3,10 @@
 .env.local
 .env.backup
 
-# Encryption keys
+# Encryption keys and TLS material
 .backup_encryption_key
 *.key
+tls/
 
 # Data directories
 mariadb_data/

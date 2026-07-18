@@ -439,6 +439,30 @@ for DB in "${DATABASES[@]}"; do
   log_success "Backup completed for database: $DB"
 done
 
+# --- Users & grants -------------------------------------------------------
+# The per-database dumps exclude the mysql system db, so users/passwords/
+# grants would be lost in a full disaster. Dump them separately.
+if [[ "$BACKUP_MODE" == "full" && -z "$SPECIFIC_DATABASE" ]]; then
+  GRANTS_FILE="$BACKUP_DIR/system_grants_full_${TIMESTAMP}.sql"
+  log_info "Backing up users and grants..."
+
+  if db_dump --system=users > "$GRANTS_FILE" 2>/dev/null && [[ -s "$GRANTS_FILE" ]]; then
+    "$COMPRESS_CMD" "$GRANTS_FILE" && GRANTS_FILE="${GRANTS_FILE}.gz"
+    ENCRYPT_ARGS=(--encrypt "$GRANTS_FILE" --key "$ENCRYPT_KEY_FILE")
+    [[ "$CREATE_CHECKSUMS" == "false" ]] && ENCRYPT_ARGS+=(--no-checksum)
+    if ./encrypt_backup.sh "${ENCRYPT_ARGS[@]}" >/dev/null; then
+      rm -f "$GRANTS_FILE"
+      log_success "Users and grants backed up: $(basename "$GRANTS_FILE").enc"
+    else
+      rm -f "$GRANTS_FILE"
+      log_warning "Failed to encrypt grants backup"
+    fi
+  else
+    rm -f "$GRANTS_FILE"
+    log_warning "Could not dump users/grants (mariadb-dump --system=users failed)"
+  fi
+fi
+
 # --- Summary --------------------------------------------------------------
 BACKUP_DURATION=$(( $(date +%s) - BACKUP_START_TIME ))
 
@@ -461,10 +485,12 @@ log_info "Compression: $([ "$COMPRESS_BACKUPS" == "true" ] && echo "enabled" || 
 
 if [[ $FAILED_BACKUPS -gt 0 ]]; then
   log_error "$FAILED_BACKUPS backup(s) failed. Check $LOG_FILE for details."
+  [[ -x ./notify.sh ]] && ./notify.sh error "Backup FAILED" "$FAILED_BACKUPS of $TOTAL_DATABASES database backup(s) failed (mode: $BACKUP_MODE). Check logs/backup.log" || true
   exit 1
 fi
 
 log_success "All backups completed successfully! Encrypted files stored in: $BACKUP_DIR"
+[[ -x ./notify.sh ]] && ./notify.sh --heartbeat || true
 
 # Optional offsite replication after a fully successful run
 if [[ "${OFFSITE_AUTO:-no}" == "yes" && $SUCCESSFUL_BACKUPS -gt 0 ]]; then
