@@ -137,15 +137,19 @@ configure_network_with_portolan() {
     fi
 
     # Collision-free subnet for the Galera cluster network
+    # (strip whitespace/ANSI codes so the validation regex is reliable)
     local galera_subnet
-    galera_subnet=$(portolan next-subnet 2>/dev/null | tail -1)
+    galera_subnet=$(portolan next-subnet 2>/dev/null | tail -1 | sed 's/\x1b\[[0-9;]*m//g' | tr -d '[:space:]')
 
     set_env_value MARIADB_PORT "$db_port"
     set_env_value HAPROXY_PORT "$db_port"
     set_env_value HAPROXY_STATS_PORT "$stats_port"
-    if [[ "$galera_subnet" =~ ^[0-9.]+/[0-9]+$ ]]; then
+    if [[ "$galera_subnet" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]]; then
         set_env_value GALERA_SUBNET "$galera_subnet"
         log_success "Galera cluster subnet: $galera_subnet"
+    else
+        log_warning "Could not get a subnet from Portolan (got: '${galera_subnet:-empty}')"
+        log_warning "Keeping GALERA_SUBNET from .env - check for conflicts with: docker network ls"
     fi
 
     # Book the resources in Portolan's registry

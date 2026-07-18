@@ -1,6 +1,6 @@
 # MariaDB Backup System Makefile
 
-.PHONY: help install env start stop restart status backup backup-full backup-incremental restore verify cleanup health logs clean build database user provision superuser list-db dashboard dashboard-html offsite offsite-dry
+.PHONY: help install env start stop restart status backup backup-full backup-incremental restore verify cleanup health logs clean build database user provision superuser list-db dashboard dashboard-html offsite offsite-dry cluster-reinit
 
 # Default target
 help:
@@ -48,6 +48,7 @@ help:
 	@echo "  make cluster-start    - Start the cluster"
 	@echo "  make cluster-stop     - Stop the cluster"
 	@echo "  make cluster-status   - Show cluster health"
+	@echo "  make cluster-reinit   - Rebuild from scratch (new subnet, DELETES data)"
 	@echo "  make update           - Rolling update (git pull + node-by-node restart)"
 	@echo "  make heal             - Run one self-healing check"
 	@echo "  make heal-daemon      - Run self-healing continuously"
@@ -157,6 +158,9 @@ cluster-stop:
 
 cluster-status:
 	@./cluster.sh status
+
+cluster-reinit:
+	@./cluster.sh reinit
 
 update:
 	@./update.sh

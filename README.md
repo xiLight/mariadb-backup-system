@@ -180,6 +180,10 @@ unchanged - the cluster lives in its own compose file.
 ./cluster.sh status        # cluster health overview
 ./cluster.sh stop          # graceful shutdown
 ./cluster.sh start         # start again (safe cold-start via heal.sh)
+
+# Factory reset: tear down + rebuild with a fresh Portolan subnet.
+# DELETES all cluster data - restore from ./backups afterwards if needed.
+./cluster.sh reinit        # or: make cluster-reinit
 ```
 
 Connect your applications to `localhost:3306` (HAProxy) - failover is transparent.

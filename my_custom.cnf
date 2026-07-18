@@ -1,6 +1,9 @@
 [mysqld]
 # Network and connections
 bind-address = 0.0.0.0
+# No reverse DNS on client connects: docker IPs have no PTR records
+# (all users are IP/%-based, socket connections are unaffected)
+skip-name-resolve = 1
 max_connections = 900
 max_connect_errors = 1000
 connect_timeout = 10

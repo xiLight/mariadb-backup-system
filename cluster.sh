@@ -15,13 +15,25 @@ usage() {
   echo "Usage: $0 COMMAND"
   echo ""
   echo "Galera cluster management:"
-  echo "  init      First-time cluster setup (bootstraps node1, joins node2/3, starts HAProxy)"
-  echo "  start     Start an already initialized cluster"
-  echo "  stop      Stop the whole cluster (HAProxy first, then nodes)"
-  echo "  status    Show cluster and replication status"
+  echo "  init            First-time cluster setup (bootstraps node1, joins node2/3, starts HAProxy)"
+  echo "  start           Start an already initialized cluster"
+  echo "  stop            Stop the whole cluster (HAProxy first, then nodes)"
+  echo "  status          Show cluster and replication status"
+  echo "  reinit [--yes]  Tear down and rebuild the cluster from scratch:"
+  echo "                  fetches a fresh subnet via Portolan, DELETES all cluster"
+  echo "                  data, then runs a clean init"
   echo ""
   echo "Rolling updates: ./update.sh | Self-healing: ./heal.sh"
   exit 0
+}
+
+set_env_value() {
+  local key="$1" value="$2"
+  if grep -q "^${key}=" .env; then
+    sed -i "s|^${key}=.*|${key}=${value}|" .env
+  else
+    echo "${key}=${value}" >> .env
+  fi
 }
 
 # Detect networks of other/old stacks that already occupy GALERA_SUBNET -
@@ -114,6 +126,52 @@ cmd_stop() {
   log_success "Cluster stopped. Restart with: ./cluster.sh start"
 }
 
+# Full teardown + clean re-initialization with a Portolan-managed subnet.
+# DESTRUCTIVE: removes all cluster data - only the encrypted backups survive.
+cmd_reinit() {
+  log_warning "Re-initialization DELETES the whole cluster including ALL databases in it!"
+  log_info "Only ./backups (encrypted) survives. A fresh cluster is built afterwards."
+
+  if [[ "$1" != "--yes" ]]; then
+    read -p "Really delete and re-initialize the cluster? (type 'yes' to confirm): " confirm
+    if [[ "$confirm" != "yes" ]]; then
+      log_info "Re-initialization cancelled"
+      exit 0
+    fi
+  fi
+
+  # Fetch a collision-free subnet from Portolan and persist it in .env
+  if command -v portolan &>/dev/null; then
+    portolan sync &>/dev/null || true
+    local new_subnet
+    new_subnet=$(portolan next-subnet 2>/dev/null | tail -1 | sed 's/\x1b\[[0-9;]*m//g' | tr -d '[:space:]')
+    if [[ "$new_subnet" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]]; then
+      set_env_value GALERA_SUBNET "$new_subnet"
+      GALERA_SUBNET="$new_subnet"
+      log_success "New Galera subnet from Portolan: $new_subnet"
+    else
+      log_warning "Portolan returned no usable subnet (got: '${new_subnet:-empty}')"
+      log_warning "Keeping GALERA_SUBNET=${GALERA_SUBNET:-172.28.66.0/24}"
+    fi
+  else
+    log_warning "Portolan not installed - keeping GALERA_SUBNET=${GALERA_SUBNET:-172.28.66.0/24}"
+  fi
+
+  log_info "Tearing down the old cluster (containers + network)..."
+  compose_cluster down
+  rm -rf ./cluster_data
+
+  cmd_init
+
+  # Mirror the new state into Portolan's registry
+  if command -v portolan &>/dev/null; then
+    portolan sync &>/dev/null || true
+    portolan reserve "${HAPROXY_PORT:-3306}" mariadb "mariadb-backup-system haproxy" &>/dev/null || true
+    portolan reserve "${HAPROXY_STATS_PORT:-8404}" haproxy-stats "mariadb-backup-system stats" &>/dev/null || true
+    log_info "Portolan registry updated (network sync + port reservations)"
+  fi
+}
+
 cmd_status() {
   print_cluster_status
 
@@ -139,5 +197,6 @@ case "$1" in
   start)  cmd_start ;;
   stop)   cmd_stop ;;
   status) cmd_status ;;
+  reinit) shift; cmd_reinit "$@" ;;
   *)      usage ;;
 esac
