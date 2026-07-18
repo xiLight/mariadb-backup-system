@@ -1,5 +1,11 @@
 FROM debian:bookworm-slim
 
+# Pin the MariaDB series: without a pin, mariadb_repo_setup installs the
+# rolling release (12.x), whose packages shipped without the wsrep_sst_*
+# scripts - Galera SST then fails with "wsrep_sst_mariabackup: not found".
+# 11.8 is the current LTS with a stable package layout (support until 2030).
+ARG MARIADB_VERSION=11.8
+
 # Install MariaDB from the official MariaDB repository
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -9,7 +15,7 @@ RUN apt-get update && \
     lsb-release \
     gosu \
     psmisc && \
-    curl -LsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash && \
+    curl -LsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash -s -- --mariadb-server-version="mariadb-${MARIADB_VERSION}" && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     mariadb-server \
@@ -22,6 +28,14 @@ RUN apt-get update && \
     gettext-base && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+# Fail the build immediately if Galera/SST prerequisites are missing -
+# better than discovering it at join time in production
+RUN command -v mariabackup && \
+    command -v wsrep_sst_mariabackup && \
+    command -v wsrep_sst_rsync && \
+    command -v socat && \
+    test -f /usr/lib/galera/libgalera_smm.so
 
 # Create necessary directories
 RUN mkdir -p /var/lib/mysql /var/run/mysqld /etc/mysql/conf.d /tmp/binlogs && \

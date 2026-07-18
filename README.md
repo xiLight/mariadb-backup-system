@@ -616,6 +616,12 @@ tail -50 cluster_data/node1/error.log | grep -i sst
 Common causes and fixes:
 
 ```bash
+# 0. "sh: 1: wsrep_sst_mariabackup: not found" in the log:
+#    the image was built from an unpinned/rolling MariaDB release whose
+#    packages lack the SST scripts. Rebuild with the pinned LTS version:
+docker compose -f docker-compose.cluster.yml build node1
+docker compose -f docker-compose.cluster.yml up -d --force-recreate node1 node2 node3
+
 # 1. SST auth failure (log shows "Access denied" / mariabackup errors):
 #    older installations lack the sst_user - create it on the donor:
 docker exec <stack>-node1 mariadb -u root -e "
