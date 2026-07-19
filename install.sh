@@ -405,6 +405,10 @@ configure_stack_name() {
 
     set_env_value STACK_NAME "$stack"
 
+    # Unique Galera cluster name per stack: two clusters with the same
+    # name on one host could merge if their ports are reachable
+    set_env_value GALERA_CLUSTER_NAME "${stack}-galera"
+
     # Single-node mode: the container itself carries the stack name
     if [[ "$INSTALL_MODE" != "cluster" ]]; then
         set_env_value MARIADB_CONTAINER "$stack"
