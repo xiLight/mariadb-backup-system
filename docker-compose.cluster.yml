@@ -104,6 +104,10 @@ services:
     image: haproxy:2.9-alpine
     container_name: ${STACK_NAME:-mariadb}-haproxy
     restart: unless-stopped
+    # The official image runs unprivileged since 2.4 and cannot read the
+    # root-owned TLS certs (mode 600) - running as root inside the
+    # container beats making the private key world-readable on the host
+    user: root
     ports:
       - "${MARIADB_BIND_IP:-0.0.0.0}:${HAPROXY_PORT:-3306}:3306"
       # Read-only round-robin across all nodes (read scaling)

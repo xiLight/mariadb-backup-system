@@ -102,13 +102,23 @@ EOF
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$haproxy_container"; then
     log_info "Restarting HAProxy to apply TLS configuration..."
     docker restart "$haproxy_container" >/dev/null
-    sleep 3
-    if docker ps --format '{{.Names}}' | grep -qx "$haproxy_container"; then
-      log_success "HAProxy restarted - TLS available on port ${HAPROXY_TLS_PORT:-3316}"
-    else
-      log_error "HAProxy did not come back up - check: docker logs $haproxy_container"
+    sleep 6
+
+    # A config/cert error makes haproxy crash-loop and takes ALL listeners
+    # down (incl. the non-TLS ports!). Verify it really stays up - and roll
+    # the TLS drop-in back otherwise so the database stays reachable.
+    if docker logs --since 25s "$haproxy_container" 2>&1 | grep -q "Fatal errors" \
+       || [[ "$(docker inspect -f '{{.State.Restarting}}' "$haproxy_container" 2>/dev/null)" == "true" ]]; then
+      log_error "HAProxy failed to start with TLS enabled:"
+      docker logs --since 25s "$haproxy_container" 2>&1 | grep ALERT | head -3 | sed 's/^/    /'
+      log_warning "ROLLING BACK: disabling the TLS listener so the database stays reachable"
+      rm -f haproxy.d/10-tls.cfg
+      docker restart "$haproxy_container" >/dev/null
+      log_info "Fix the cause, then re-run this script"
       exit 1
     fi
+
+    log_success "HAProxy restarted - TLS available on port ${HAPROXY_TLS_PORT:-3316}"
   else
     log_info "HAProxy not running - TLS will be active on the next cluster start"
   fi
