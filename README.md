@@ -574,7 +574,7 @@ mariadb-backup-system/
 ├── 📄 Dockerfile.mariadb       # Custom MariaDB image (incl. Galera)
 ├── 📄 my_custom.cnf            # MariaDB configuration
 ├── 📄 galera.cnf.template      # Per-node Galera config (rendered by entrypoint)
-├── 📄 haproxy.cfg              # HAProxy failover configuration
+├── 📁 haproxy.d/               # HAProxy config (00-main.cfg tracked, 10-tls.cfg generated)
 ├── 📄 entrypoint.sh            # MariaDB startup script
 ├── 📄 .env.example             # Environment template
 ├── 📄 install.sh               # Installer (Portolan, mode, cron, start)

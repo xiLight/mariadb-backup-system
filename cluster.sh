@@ -160,7 +160,15 @@ cmd_reinit() {
   fi
 
   log_info "Tearing down the old cluster (containers + network)..."
-  compose_cluster down
+  compose_cluster down || log_warning "compose down reported errors - continuing with forced cleanup"
+
+  # Belt and braces: compose down can leave the network behind when the
+  # subnet in .env changed since creation - remove it explicitly
+  local own_net="${STACK_NAME}-cluster_galera"
+  if docker network ls --format '{{.Name}}' | grep -qx "$own_net"; then
+    docker network rm "$own_net" >/dev/null 2>&1 && log_info "Removed leftover network $own_net"
+  fi
+
   rm -rf ./cluster_data
 
   cmd_init

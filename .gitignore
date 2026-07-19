@@ -8,6 +8,9 @@
 *.key
 tls/
 
+# Generated at runtime by tls_setup.sh (keeps the git tree clean)
+haproxy.d/10-tls.cfg
+
 # Data directories
 mariadb_data/
 cluster_data/

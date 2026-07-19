@@ -60,12 +60,16 @@ if [[ "$SKIP_PULL" == "false" ]]; then
   log_info "Pulling latest version from git..."
 
   if ! git diff-index --quiet HEAD -- 2>/dev/null; then
-    log_warning "You have uncommitted local changes - git pull may fail or merge"
+    log_warning "Local changes detected in tracked files:"
+    git status --short | grep -v '^??' | sed 's/^/    /'
+    log_warning "A clean tree is expected - runtime files (tls, .env, haproxy.d/10-tls.cfg) are gitignored."
+    log_warning "Discard unexpected changes with: git checkout -- <file>   (or stash them)"
   fi
 
   OLD_COMMIT=$(git rev-parse --short HEAD 2>/dev/null)
   if ! git pull --ff-only; then
-    log_error "git pull failed. Resolve conflicts manually or use --skip-pull."
+    log_error "git pull failed - the files listed above are blocking it."
+    log_error "Fix with 'git checkout -- <file>' or 'git stash', then re-run. Or use --skip-pull."
     exit 1
   fi
   NEW_COMMIT=$(git rev-parse --short HEAD 2>/dev/null)
