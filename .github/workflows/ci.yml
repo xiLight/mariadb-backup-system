@@ -43,6 +43,9 @@ jobs:
         run: |
           cp .env.example .env
           sed -i 's/^STACK_NAME=.*/STACK_NAME=ci/' .env
+          # backup/restore scripts talk to node1 (install.sh does this in prod)
+          sed -i 's/^MARIADB_CONTAINER=.*/MARIADB_CONTAINER=ci-node1/' .env
+          sed -i 's/^GALERA_CLUSTER_NAME=.*/GALERA_CLUSTER_NAME=ci-galera/' .env
           sed -i 's/your_secure_root_password_here/CiRootPass12345/' .env
           sed -i 's/your_secure_app_password_here/CiAppPass12345/' .env
           sed -i 's/db1_password/CiDb1Pass12345/' .env
