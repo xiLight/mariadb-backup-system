@@ -7,6 +7,11 @@ COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compos
 # Container name for direct docker exec (single-node default; cluster uses <stack>-node1)
 CONTAINER := $(shell v=$$(grep -E '^MARIADB_CONTAINER=' .env 2>/dev/null | cut -d= -f2); echo $${v:-mariadb})
 
+# Cluster mode is active once cluster_data exists - container-management
+# targets then operate on the cluster compose file
+IS_CLUSTER := $(shell [ -d cluster_data ] && echo yes || echo no)
+COMPOSE_ARGS := $(shell [ -d cluster_data ] && echo "-f docker-compose.cluster.yml")
+
 .PHONY: help install env start stop restart status backup backup-full backup-incremental restore verify cleanup health logs clean build database user provision superuser list-db dashboard dashboard-html offsite offsite-dry cluster-reinit restore-test notify-test tls tls-status drill tune tune-apply
 
 # Default target
@@ -117,29 +122,26 @@ install:
 	@chmod +x install.sh
 	@./install.sh --allow-root
 
-# Container management
+# Container management (cluster-aware: delegates to cluster.sh in cluster mode)
 start:
-	@echo "Starting MariaDB container..."
-	@$(COMPOSE) up -d
+	@if [ "$(IS_CLUSTER)" = "yes" ]; then ./cluster.sh start; else echo "Starting MariaDB container..."; $(COMPOSE) up -d; fi
 
 stop:
-	@echo "Stopping MariaDB container..."
-	@$(COMPOSE) down
+	@if [ "$(IS_CLUSTER)" = "yes" ]; then ./cluster.sh stop; else echo "Stopping MariaDB container..."; $(COMPOSE) down; fi
 
 restart:
-	@echo "Restarting MariaDB container..."
-	@$(COMPOSE) restart
+	@if [ "$(IS_CLUSTER)" = "yes" ]; then $(COMPOSE) $(COMPOSE_ARGS) restart; else echo "Restarting MariaDB container..."; $(COMPOSE) restart; fi
 
 status:
-	@echo "Container Status:"
-	@$(COMPOSE) ps
-	@echo ""
-	@echo "MariaDB Status:"
-	@docker exec -e MYSQL_PWD=$(shell grep MARIADB_ROOT_PASSWORD .env | cut -d= -f2) $(CONTAINER) mariadb -u root -e "SHOW STATUS LIKE 'Uptime%';" 2>/dev/null || echo "Cannot connect to MariaDB"
+	@if [ "$(IS_CLUSTER)" = "yes" ]; then ./cluster.sh status; else \
+		echo "Container Status:"; $(COMPOSE) ps; \
+		echo ""; echo "MariaDB Status:"; \
+		docker exec -e MYSQL_PWD=$(shell grep MARIADB_ROOT_PASSWORD .env | cut -d= -f2) $(CONTAINER) mariadb -u root -e "SHOW STATUS LIKE 'Uptime%';" 2>/dev/null || echo "Cannot connect to MariaDB"; \
+	fi
 
 build:
 	@echo "Building MariaDB container..."
-	@$(COMPOSE) build
+	@$(COMPOSE) $(COMPOSE_ARGS) build
 
 # Backup operations
 backup:
@@ -284,14 +286,14 @@ logs-follow:
 # Development and maintenance
 clean:
 	@echo "Cleaning containers and images..."
-	@$(COMPOSE) down -v
+	@$(COMPOSE) $(COMPOSE_ARGS) down -v
 	@docker system prune -f
 
 reset: clean
 	@echo "WARNING: This will delete ALL data and backups!"
 	@read -p "Are you sure? (type 'yes' to confirm): " confirm && [ "$$confirm" = "yes" ] || exit 1
-	@rm -rf mariadb_data/ backups/ logs/
-	@$(COMPOSE) down -v --remove-orphans
+	@rm -rf mariadb_data/ cluster_data/ backups/ logs/
+	@$(COMPOSE) $(COMPOSE_ARGS) down -v --remove-orphans
 	@docker volume prune -f
 	@echo "System reset complete"
 
