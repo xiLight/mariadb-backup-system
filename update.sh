@@ -81,6 +81,39 @@ if [[ "$SKIP_PULL" == "false" ]]; then
   fi
 fi
 
+# --- Step 1.5: Migrate .env ------------------------------------------------
+# Updates can introduce new published ports. Existing .env files lack those
+# keys, so compose would fall back to defaults that may collide with other
+# stacks on this host. Fill missing keys BEFORE recreating any container,
+# using Portolan to pick free ports when available.
+ensure_env_port() {
+  local key="$1" preferred="$2" service="$3"
+  grep -q "^${key}=" .env && return 0
+
+  local port="$preferred"
+  if command -v portolan &>/dev/null; then
+    portolan sync &>/dev/null || true
+    if ! portolan check "$preferred" &>/dev/null; then
+      port=$(portolan next-ports 1 $((preferred + 1)) 2>/dev/null | head -1)
+      [[ "$port" =~ ^[0-9]+$ ]] || port="$preferred"
+      log_warning "Port $preferred is taken - Portolan chose $port for $key"
+    fi
+    portolan reserve "$port" "$service" "mariadb-backup-system" &>/dev/null || true
+  else
+    log_warning "Portolan not available - using default $preferred for $key (verify it is free!)"
+  fi
+
+  echo "${key}=${port}" >> .env
+  log_info "Migrated .env: added ${key}=${port}"
+}
+
+migrate_env() {
+  ensure_env_port HAPROXY_READ_PORT 3309 mariadb-read
+  ensure_env_port HAPROXY_TLS_PORT 3316 mariadb-tls
+  ensure_env_port HAPROXY_STATS_PORT 8404 haproxy-stats
+}
+migrate_env
+
 # --- Step 2: Detect mode ---------------------------------------------------
 CLUSTER_RUNNING=$(compose_cluster ps -q node1 node2 node3 2>/dev/null | wc -l)
 
