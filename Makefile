@@ -1,5 +1,12 @@
 # MariaDB Backup System Makefile
 
+# Prefer the Docker Compose plugin ("docker compose"), fall back to the
+# legacy standalone binary ("docker-compose") if that's all that's present.
+COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
+
+# Container name for direct docker exec (single-node default; cluster uses <stack>-node1)
+CONTAINER := $(shell v=$$(grep -E '^MARIADB_CONTAINER=' .env 2>/dev/null | cut -d= -f2); echo $${v:-mariadb})
+
 .PHONY: help install env start stop restart status backup backup-full backup-incremental restore verify cleanup health logs clean build database user provision superuser list-db dashboard dashboard-html offsite offsite-dry cluster-reinit restore-test notify-test tls tls-status drill tune tune-apply
 
 # Default target
@@ -113,26 +120,26 @@ install:
 # Container management
 start:
 	@echo "Starting MariaDB container..."
-	@docker-compose up -d
+	@$(COMPOSE) up -d
 
 stop:
 	@echo "Stopping MariaDB container..."
-	@docker-compose down
+	@$(COMPOSE) down
 
 restart:
 	@echo "Restarting MariaDB container..."
-	@docker-compose restart
+	@$(COMPOSE) restart
 
 status:
 	@echo "Container Status:"
-	@docker-compose ps
+	@$(COMPOSE) ps
 	@echo ""
 	@echo "MariaDB Status:"
-	@docker exec -e MYSQL_PWD=$(shell grep MARIADB_ROOT_PASSWORD .env | cut -d= -f2) mariadb mariadb -u root -e "SHOW STATUS LIKE 'Uptime%';" 2>/dev/null || echo "Cannot connect to MariaDB"
+	@docker exec -e MYSQL_PWD=$(shell grep MARIADB_ROOT_PASSWORD .env | cut -d= -f2) $(CONTAINER) mariadb -u root -e "SHOW STATUS LIKE 'Uptime%';" 2>/dev/null || echo "Cannot connect to MariaDB"
 
 build:
 	@echo "Building MariaDB container..."
-	@docker-compose build
+	@$(COMPOSE) build
 
 # Backup operations
 backup:
@@ -264,7 +271,7 @@ health-test:
 # Logging
 logs:
 	@echo "Showing MariaDB logs (last 100 lines):"
-	@docker logs --tail 100 mariadb
+	@docker logs --tail 100 $(CONTAINER)
 
 logs-backup:
 	@echo "Showing backup logs:"
@@ -272,19 +279,19 @@ logs-backup:
 
 logs-follow:
 	@echo "Following MariaDB logs (Ctrl+C to stop):"
-	@docker logs -f mariadb
+	@docker logs -f $(CONTAINER)
 
 # Development and maintenance
 clean:
 	@echo "Cleaning containers and images..."
-	@docker-compose down -v
+	@$(COMPOSE) down -v
 	@docker system prune -f
 
 reset: clean
 	@echo "WARNING: This will delete ALL data and backups!"
 	@read -p "Are you sure? (type 'yes' to confirm): " confirm && [ "$$confirm" = "yes" ] || exit 1
 	@rm -rf mariadb_data/ backups/ logs/
-	@docker-compose down -v --remove-orphans
+	@$(COMPOSE) down -v --remove-orphans
 	@docker volume prune -f
 	@echo "System reset complete"
 
@@ -301,7 +308,7 @@ config:
 mysql: mariadb
 mariadb:
 	@echo "Connecting to MariaDB..."
-	@docker exec -it -e MYSQL_PWD=$(shell grep MARIADB_ROOT_PASSWORD .env | cut -d= -f2) mariadb mariadb -u root
+	@docker exec -it -e MYSQL_PWD=$(shell grep MARIADB_ROOT_PASSWORD .env | cut -d= -f2) $(CONTAINER) mariadb -u root
 
 # Show disk usage
 disk-usage:

@@ -6,6 +6,10 @@ set -e
 # Load logging functions
 source "./lib/logging.sh"
 
+# Docker Compose command - resolved properly in check_prerequisites,
+# this is a safe default (the plugin is standard on modern Docker)
+COMPOSE="docker compose"
+
 print_banner() {
     echo -e "${BLUE}"
     echo "╔══════════════════════════════════════════════════════════════╗"
@@ -201,18 +205,17 @@ check_prerequisites() {
     fi
     log_success "Docker found: $(docker --version)"
     
-    # Check Docker Compose
-    if ! command -v docker compose &> /dev/null && ! docker compose version &> /dev/null; then
+    # Check Docker Compose - prefer the plugin, fall back to the legacy binary
+    if docker compose version &> /dev/null; then
+        COMPOSE="docker compose"
+    elif command -v docker-compose &> /dev/null; then
+        COMPOSE="docker-compose"
+    else
         log_error "Docker Compose is not installed. Please install Docker Compose first."
         echo "Visit: https://docs.docker.com/compose/install/"
         exit 1
     fi
-    
-    if command -v docker compose &> /dev/null; then
-        log_success "Docker Compose found: $(docker-compose --version)"
-    else
-        log_success "Docker Compose found: $(docker compose version)"
-    fi
+    log_success "Docker Compose found: $($COMPOSE version | head -1)"
     
     # Check if Docker daemon is running
     if ! docker info &> /dev/null; then
@@ -335,17 +338,11 @@ setup_network() {
 # Build and start containers
 start_services() {
     log_info "Building and starting MariaDB container..."
-    
-    if command -v docker-compose &> /dev/null; then
-        docker-compose down 2>/dev/null || true
-        docker-compose build
-        docker-compose up -d
-    else
-        docker compose down 2>/dev/null || true
-        docker compose build
-        docker compose up -d
-    fi
-    
+
+    $COMPOSE down 2>/dev/null || true
+    $COMPOSE build
+    $COMPOSE up -d
+
     log_success "MariaDB container started"
 
     # Wait for MariaDB to be ready
