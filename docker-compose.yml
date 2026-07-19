@@ -21,6 +21,11 @@ services:
       DATABASE4_PASSWORD: ${DATABASE4_PASSWORD}
       DATABASE5_PASSWORD: ${DATABASE5_PASSWORD}
       TZ: ${TZ:-Europe/Berlin}
+      DB_BUFFER_POOL_SIZE: ${DB_BUFFER_POOL_SIZE:-}
+      DB_LOG_FILE_SIZE: ${DB_LOG_FILE_SIZE:-}
+      DB_IO_CAPACITY: ${DB_IO_CAPACITY:-}
+      DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-}
+      DB_TMP_TABLE_SIZE: ${DB_TMP_TABLE_SIZE:-}
     volumes:
       - ./mariadb_data:/var/lib/mysql
       - ./my_custom.cnf:/etc/mysql/conf.d/my_custom.cnf:ro

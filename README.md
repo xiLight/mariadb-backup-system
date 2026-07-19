@@ -838,21 +838,32 @@ make list-backups
 
 ### Performance Tuning
 
-Adjust MariaDB settings in `my_custom.cnf`:
+`my_custom.cnf` ships moderate, safe defaults. Tune to your hardware via
+`.env` (no tracked files touched) - or let `tune.sh` measure and suggest:
 
-```ini
-# For high-memory systems (rule of thumb: ~70% of available RAM)
-innodb_buffer_pool_size = 2048M
-innodb_log_file_size = 256M
-
-# For high-traffic systems
-max_connections = 2000
-thread_cache_size = 256
+```bash
+./tune.sh                    # show recommendations from host RAM/CPU/disk + live metrics
+./tune.sh --ram 15 --apply   # budget 15 GB to the DB, write to .env, rolling restart
 ```
 
-For full durability (at the cost of write performance) set
-`sync_binlog = 1` and `innodb_flush_log_at_trx_commit = 1` - the shipped
-defaults favor performance because backups + cluster replication exist.
+The relevant `.env` knobs (**per node** - in cluster mode all 3 share the host):
+
+| Variable | Effect |
+|---|---|
+| `DB_BUFFER_POOL_SIZE` | InnoDB cache - the single most important value |
+| `DB_LOG_FILE_SIZE` | Redo log size; larger helps write-heavy loads |
+| `DB_IO_CAPACITY` | Match the disk: HDD ~200, SSD ~1000, NVMe ~2500 |
+| `DB_MAX_CONNECTIONS` | Cap connections (each costs RAM) |
+| `DB_TMP_TABLE_SIZE` | Avoid temp tables spilling to disk |
+| `GALERA_GCACHE_SIZE` | Write-set cache; larger = fast IST instead of full SST on rejoin |
+
+**Budget rule (cluster):** `buffer_pool x3 + gcache x3 + ~1 GB/node <= host RAM`.
+Example for 15 GB dedicated to the DB: `DB_BUFFER_POOL_SIZE=4G` (12 GB across
+3 nodes) + `GALERA_GCACHE_SIZE=512M` leaves healthy headroom.
+
+For full durability (at the cost of write performance) set `sync_binlog = 1`
+and `innodb_flush_log_at_trx_commit = 1` - the shipped defaults favor
+performance because backups + cluster replication already protect the data.
 
 ### Backup Scheduling
 

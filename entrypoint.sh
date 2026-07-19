@@ -44,7 +44,8 @@ if [ "$GALERA_ENABLED" = "yes" ]; then
   # Render the per-node Galera config from the template
   if [ -f "/etc/mysql/galera.cnf.template" ]; then
     GALERA_SST_METHOD="${GALERA_SST_METHOD:-mariabackup}"
-    export GALERA_CLUSTER_NAME GALERA_CLUSTER_ADDRESS GALERA_NODE_NAME GALERA_NODE_ADDRESS GALERA_NODE_ID GALERA_SST_METHOD MARIADB_ROOT_PASSWORD
+    GALERA_GCACHE_SIZE="${GALERA_GCACHE_SIZE:-512M}"
+    export GALERA_CLUSTER_NAME GALERA_CLUSTER_ADDRESS GALERA_NODE_NAME GALERA_NODE_ADDRESS GALERA_NODE_ID GALERA_SST_METHOD GALERA_GCACHE_SIZE MARIADB_ROOT_PASSWORD
     envsubst < /etc/mysql/galera.cnf.template > /etc/mysql/conf.d/zz-galera.cnf ||
       handle_error "Failed to render Galera configuration"
     log_info "Galera configuration rendered to /etc/mysql/conf.d/zz-galera.cnf"
@@ -82,8 +83,36 @@ if [ -f "/etc/mysql/tls/server-cert.pem" ] && [ -f "/etc/mysql/tls/server-key.pe
     echo "[mysqld]"
     echo "ssl_cert = /etc/mysql/tls-runtime/server-cert.pem"
     echo "ssl_key = /etc/mysql/tls-runtime/server-key.pem"
-    [ -f /etc/mysql/tls-runtime/ca.pem ] && echo "ssl_ca = /etc/mysql/tls-runtime/ca.pem"
+    if [ -f /etc/mysql/tls-runtime/ca.pem ]; then
+      echo "ssl_ca = /etc/mysql/tls-runtime/ca.pem"
+    fi
   } > /etc/mysql/conf.d/zz-tls.cnf
+fi
+
+# --- Performance tuning (optional, via .env) -------------------------------
+# Overrides the moderate defaults in my_custom.cnf without touching tracked
+# files. Loaded last (zz-tuning), so these values win.
+if [ -n "$DB_BUFFER_POOL_SIZE" ] || [ -n "$DB_LOG_FILE_SIZE" ] || [ -n "$DB_IO_CAPACITY" ] || [ -n "$DB_MAX_CONNECTIONS" ] || [ -n "$DB_TMP_TABLE_SIZE" ]; then
+  log_info "Rendering performance tuning overrides from environment"
+  {
+    echo "[mysqld]"
+    if [ -n "$DB_BUFFER_POOL_SIZE" ]; then
+      echo "innodb_buffer_pool_size = $DB_BUFFER_POOL_SIZE"
+    fi
+    if [ -n "$DB_LOG_FILE_SIZE" ]; then
+      echo "innodb_log_file_size = $DB_LOG_FILE_SIZE"
+    fi
+    if [ -n "$DB_IO_CAPACITY" ]; then
+      echo "innodb_io_capacity = $DB_IO_CAPACITY"
+    fi
+    if [ -n "$DB_MAX_CONNECTIONS" ]; then
+      echo "max_connections = $DB_MAX_CONNECTIONS"
+    fi
+    if [ -n "$DB_TMP_TABLE_SIZE" ]; then
+      echo "tmp_table_size = $DB_TMP_TABLE_SIZE"
+      echo "max_heap_table_size = $DB_TMP_TABLE_SIZE"
+    fi
+  } > /etc/mysql/conf.d/zz-tuning.cnf
 fi
 
 # Create necessary directories
