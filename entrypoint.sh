@@ -66,6 +66,26 @@ if [ "$GALERA_ENABLED" = "yes" ]; then
   fi
 fi
 
+# --- Server-side TLS (optional) -------------------------------------------
+# MySQL-protocol TLS is negotiated in-protocol (STARTTLS-style), so it must
+# terminate at mariadbd itself - a TLS-terminating proxy cannot work.
+# Certs are mounted root-owned; copy them readable for the mysql user.
+if [ -f "/etc/mysql/tls/server-cert.pem" ] && [ -f "/etc/mysql/tls/server-key.pem" ]; then
+  log_info "TLS certificates found - enabling server-side TLS"
+  mkdir -p /etc/mysql/tls-runtime
+  cp /etc/mysql/tls/server-cert.pem /etc/mysql/tls/server-key.pem /etc/mysql/tls-runtime/
+  [ -f /etc/mysql/tls/ca.pem ] && cp /etc/mysql/tls/ca.pem /etc/mysql/tls-runtime/
+  chown -R mysql:mysql /etc/mysql/tls-runtime
+  chmod 500 /etc/mysql/tls-runtime
+  chmod 400 /etc/mysql/tls-runtime/*
+  {
+    echo "[mysqld]"
+    echo "ssl_cert = /etc/mysql/tls-runtime/server-cert.pem"
+    echo "ssl_key = /etc/mysql/tls-runtime/server-key.pem"
+    [ -f /etc/mysql/tls-runtime/ca.pem ] && echo "ssl_ca = /etc/mysql/tls-runtime/ca.pem"
+  } > /etc/mysql/conf.d/zz-tls.cnf
+fi
+
 # Create necessary directories
 log_info "Creating directories"
 mkdir -p "$DATADIR" || handle_error "Failed to create data directory"

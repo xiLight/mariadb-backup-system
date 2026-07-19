@@ -26,6 +26,7 @@ services:
       - ./my_custom.cnf:/etc/mysql/conf.d/my_custom.cnf:ro
       - ./entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
       - ./lib:/usr/local/lib:ro
+      - ./tls:/etc/mysql/tls:ro
     entrypoint: ["/usr/local/bin/entrypoint.sh"]
     ports:
       - "${MARIADB_BIND_IP:-0.0.0.0}:${MARIADB_PORT:-3306}:3306"

@@ -62,6 +62,7 @@ services:
       - ./galera.cnf.template:/etc/mysql/galera.cnf.template:ro
       - ./entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
       - ./lib:/usr/local/lib:ro
+      - ./tls:/etc/mysql/tls:ro
     entrypoint: ["/usr/local/bin/entrypoint.sh"]
 
   node2:
@@ -80,6 +81,7 @@ services:
       - ./galera.cnf.template:/etc/mysql/galera.cnf.template:ro
       - ./entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
       - ./lib:/usr/local/lib:ro
+      - ./tls:/etc/mysql/tls:ro
     entrypoint: ["/usr/local/bin/entrypoint.sh"]
 
   node3:
@@ -98,32 +100,28 @@ services:
       - ./galera.cnf.template:/etc/mysql/galera.cnf.template:ro
       - ./entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
       - ./lib:/usr/local/lib:ro
+      - ./tls:/etc/mysql/tls:ro
     entrypoint: ["/usr/local/bin/entrypoint.sh"]
 
   haproxy:
     image: haproxy:2.9-alpine
     container_name: ${STACK_NAME:-mariadb}-haproxy
     restart: unless-stopped
-    # The official image runs unprivileged since 2.4 and cannot read the
-    # root-owned TLS certs (mode 600) - running as root inside the
-    # container beats making the private key world-readable on the host
-    user: root
+    # TLS terminates at mariadbd itself (MySQL protocol is STARTTLS-style,
+    # a TLS-terminating proxy cannot work) - HAProxy stays plain TCP and
+    # passes the in-protocol TLS through transparently on the normal ports.
     ports:
       - "${MARIADB_BIND_IP:-0.0.0.0}:${HAPROXY_PORT:-3306}:3306"
       # Read-only round-robin across all nodes (read scaling)
       - "${MARIADB_BIND_IP:-0.0.0.0}:${HAPROXY_READ_PORT:-3309}:3307"
-      # TLS listener (active after ./tls_setup.sh)
-      - "${MARIADB_BIND_IP:-0.0.0.0}:${HAPROXY_TLS_PORT:-3316}:3316"
       # Stats page shows cluster internals - localhost only by default,
       # reach it remotely via SSH tunnel or set HAPROXY_STATS_BIND_IP
       - "${HAPROXY_STATS_BIND_IP:-127.0.0.1}:${HAPROXY_STATS_PORT:-8404}:8404"
     volumes:
       # Directory instead of a single file: haproxy -f <dir> loads all
-      # files lexically. 00-main.cfg is tracked in git; 10-tls.cfg is
-      # written by tls_setup.sh and untracked - so runtime changes never
-      # dirty the git working tree (would block git pull / update.sh).
+      # files lexically; runtime drop-ins are untracked so the git tree
+      # stays clean (would block git pull / update.sh otherwise).
       - ./haproxy.d:/usr/local/etc/haproxy/haproxy.cfg:ro
-      - ./tls:/usr/local/etc/haproxy/tls:ro
     networks:
       - galera
       - web

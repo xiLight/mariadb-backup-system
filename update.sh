@@ -109,7 +109,6 @@ ensure_env_port() {
 
 migrate_env() {
   ensure_env_port HAPROXY_READ_PORT 3309 mariadb-read
-  ensure_env_port HAPROXY_TLS_PORT 3316 mariadb-tls
   ensure_env_port HAPROXY_STATS_PORT 8404 haproxy-stats
 }
 migrate_env

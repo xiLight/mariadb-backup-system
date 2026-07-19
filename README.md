@@ -129,7 +129,6 @@ A full backup creates:
 | `GALERA_SUBNET` | Cluster network subnet (filled via Portolan) | `172.20.0.0/24` | No |
 | `HAPROXY_PORT` | HAProxy write port (cluster mode) | `3306` | No |
 | `HAPROXY_READ_PORT` | Read-only round-robin port | `3309` | No |
-| `HAPROXY_TLS_PORT` | TLS port (after tls_setup.sh) | `3316` | No |
 | `HAPROXY_STATS_PORT` | HAProxy stats dashboard port | `8404` | No |
 | `HAPROXY_STATS_BIND_IP` | Stats page binding (localhost by default) | `127.0.0.1` | No |
 | `CLUSTER_SYNC_TIMEOUT` | Max seconds for a node to resync | `600` | No |
@@ -199,26 +198,31 @@ Connect your applications to the HAProxy ports (see `.env` for actual values):
 |---|---|
 | `HAPROXY_PORT` (default 3306) | **Writes + reads** - single-writer routing with automatic failover |
 | `HAPROXY_READ_PORT` (default 3309) | **Read-only** - round-robin across ALL nodes for read scaling |
-| `HAPROXY_TLS_PORT` (default 3316) | TLS-encrypted connections (after `./tls_setup.sh`) |
 
 ### TLS for Client Connections
 
 ```bash
-./tls_setup.sh                       # own CA + cert, enables the TLS listener
-./tls_setup.sh --domain db.example.com
+./tls_setup.sh --domain db.example.com --ip 203.0.113.10   # own CA + cert
 ./tls_setup.sh --import fullchain.pem key.pem   # reuse Coolify/Traefik/Caddy/certbot certs
 ./tls_setup.sh --status              # or: make tls-status
 ```
 
-The script detects reverse proxies (Traefik/Caddy/Coolify) occupying ports
-80/443 and recommends importing their certificates instead of ACME. TLS is
-terminated in HAProxy; node-to-node traffic stays on the isolated cluster
-network. Clients connect with:
+The MySQL protocol negotiates TLS **in-protocol** (STARTTLS-style), so TLS
+terminates at **mariadbd itself** - a TLS-terminating proxy cannot work with
+MySQL clients. `tls_setup.sh` installs the certs on every node (rolling, one
+node at a time) and clients simply add `--ssl` on the **normal ports**:
 
 ```bash
-mariadb --host <server> --port 3316 --ssl --ssl-ca tls/ca.pem -u <user> -p
+mariadb --host <server> --port <write-port> --ssl --ssl-ca tls/ca.pem -u <user> -p
 ```
 
+GUI clients (Navicat/HeidiSQL/DBeaver): enable "Use SSL", set the CA file,
+leave client-certificate fields empty. Include every hostname/IP clients use
+via `--domain`/`--ip`, otherwise certificate verification fails. TLS is
+offered, not enforced - connections without `--ssl` still work.
+
+The script detects reverse proxies (Traefik/Caddy/Coolify) occupying ports
+80/443 and recommends importing their certificates instead of ACME.
 `tls/ca.pem` is public and safe to distribute; the key files never leave the
 server. Imported certs must be re-imported after renewal (cron-able).
 
