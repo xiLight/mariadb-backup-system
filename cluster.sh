@@ -218,10 +218,12 @@ cmd_drill() {
   fi
 
   # haproxy_check has no privileges but may log in - perfect for a probe.
+  # --skip-ssl: since 11.4 clients enforce TLS verification on TCP, which a
+  # passwordless user cannot satisfy - this probe tests failover, not TLS.
   # Retry a few times: the failover window itself may still be settling.
   local probe_ok=false attempt
   for attempt in 1 2 3; do
-    if docker exec "$(node_container node2)" mariadb -h haproxy -u haproxy_check -e "SELECT 1;" >/dev/null 2>&1; then
+    if docker exec "$(node_container node2)" mariadb -h haproxy --skip-ssl -u haproxy_check -e "SELECT 1;" >/dev/null 2>&1; then
       probe_ok=true
       break
     fi

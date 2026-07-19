@@ -98,10 +98,13 @@ remove_legacy_haproxy_tls() {
   fi
 }
 
-# TLS is active once mariadbd reports a usable cipher on a TLS connection
+# TLS is active once mariadbd reports a usable cipher on a TLS connection.
+# The CA file inside the container lets the passwordless check user pass
+# the client-side certificate verification (default since MariaDB 11.4).
 node_tls_works() {
   local container="$1"
-  docker exec "$container" mariadb -h 127.0.0.1 --ssl -u haproxy_check \
+  docker exec "$container" mariadb -h 127.0.0.1 --ssl \
+    --ssl-ca /etc/mysql/tls-runtime/ca.pem -u haproxy_check \
     -N -e "SHOW STATUS LIKE 'Ssl_cipher';" 2>/dev/null | awk '{print $2}' | grep -q .
 }
 
