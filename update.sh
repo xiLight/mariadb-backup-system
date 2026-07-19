@@ -157,6 +157,12 @@ fi
 log_info "Building updated image..."
 compose_cluster build node1 || { log_error "Image build failed - nothing was changed"; exit 1; }
 
+# Pause self-healing during the rolling update - the heal cron must not
+# race the intentional node recreations
+touch ./logs/.heal_paused
+trap 'rm -f ./logs/.heal_paused' EXIT
+log_info "Self-healing paused for the duration of the update"
+
 for node in "${CLUSTER_NODES[@]}"; do
   CONTAINER=$(node_container "$node")
   echo ""
@@ -184,6 +190,9 @@ done
 
 log_info "Refreshing HAProxy..."
 compose_cluster up -d haproxy
+
+rm -f ./logs/.heal_paused
+log_info "Self-healing resumed"
 
 UPDATE_DURATION=$(( $(date +%s) - UPDATE_START_TIME ))
 

@@ -24,6 +24,10 @@ source "./lib/cluster.sh"
 HEAL_INTERVAL="${HEAL_INTERVAL:-30}"
 STRIKE_LIMIT=3
 STRIKE_DIR="./logs/.heal_strikes"
+# Drills and rolling updates touch this file to pause self-healing so it
+# does not "repair" intentional outages. TTL guards against stale flags.
+PAUSE_FILE="./logs/.heal_paused"
+PAUSE_TTL=3600
 DAEMON_MODE=false
 RECOVER_ONLY=false
 
@@ -138,6 +142,17 @@ heal_once() {
   if [[ ! -d "./cluster_data" ]]; then
     log_info "No cluster data found - nothing to heal (run ./cluster.sh init first)"
     return 0
+  fi
+
+  # Maintenance mode (failover drill / rolling update in progress)
+  if [[ -f "$PAUSE_FILE" ]]; then
+    local pause_age=$(( $(date +%s) - $(stat -c %Y "$PAUSE_FILE" 2>/dev/null || echo 0) ))
+    if (( pause_age < PAUSE_TTL )); then
+      log_info "Maintenance mode active (${pause_age}s) - skipping heal checks"
+      return 0
+    fi
+    log_warning "Stale maintenance flag (>${PAUSE_TTL}s old) - removing it and resuming healing"
+    rm -f "$PAUSE_FILE"
   fi
 
   local running=0 node

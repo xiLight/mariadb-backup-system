@@ -198,9 +198,16 @@ cmd_drill() {
     exit 0
   fi
 
+  # Pause self-healing - otherwise the heal cron restarts node1 mid-drill
+  # and "repairs" the intentional outage before we can measure failover
+  touch ./logs/.heal_paused
+  trap 'rm -f ./logs/.heal_paused' EXIT
+  log_info "Self-healing paused for the duration of the drill"
+
   log_info "Stopping $(node_container node1)..."
   docker stop "$(node_container node1)" >/dev/null
 
+  # HAProxy needs fall(3) x inter(3s) ~ 9-12s to mark node1 down
   sleep 15
 
   # The cluster must stay primary and reachable through HAProxy
@@ -210,8 +217,18 @@ cmd_drill() {
     drill_ok=false
   fi
 
-  # haproxy_check has no privileges but may log in - perfect for a probe
-  if docker exec "$(node_container node2)" mariadb -h haproxy -u haproxy_check -e "SELECT 1;" >/dev/null 2>&1; then
+  # haproxy_check has no privileges but may log in - perfect for a probe.
+  # Retry a few times: the failover window itself may still be settling.
+  local probe_ok=false attempt
+  for attempt in 1 2 3; do
+    if docker exec "$(node_container node2)" mariadb -h haproxy -u haproxy_check -e "SELECT 1;" >/dev/null 2>&1; then
+      probe_ok=true
+      break
+    fi
+    sleep 5
+  done
+
+  if [[ "$probe_ok" == "true" ]]; then
     log_success "HAProxy failover works: queries are served without node1"
   else
     log_error "Query through HAProxy FAILED during node1 outage"
@@ -221,6 +238,9 @@ cmd_drill() {
   log_info "Bringing node1 back..."
   docker start "$(node_container node1)" >/dev/null
   wait_node_synced node1 || drill_ok=false
+
+  rm -f ./logs/.heal_paused
+  log_info "Self-healing resumed"
 
   if [[ "$drill_ok" == "true" ]]; then
     log_success "=== DRILL PASSED: failover and recovery work as designed ==="
