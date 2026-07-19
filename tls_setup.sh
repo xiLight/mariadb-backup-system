@@ -16,6 +16,7 @@ DOMAIN="${TLS_DOMAIN:-$(hostname -f 2>/dev/null || hostname)}"
 MODE=""
 IMPORT_CERT=""
 IMPORT_KEY=""
+EXTRA_IPS=()
 
 # Sets up TLS termination for MariaDB client connections in HAProxy:
 #   - own CA + server certificate (self-signed, default), or
@@ -31,10 +32,17 @@ usage() {
   echo "OPTIONS:"
   echo "  --self-signed        Generate own CA + server cert (default)"
   echo "  --domain NAME        Hostname for the certificate (default: $DOMAIN)"
+  echo "  --ip ADDR            Additional IP for the certificate (repeatable) -"
+  echo "                       required if clients connect via IP with verification"
   echo "  --import CERT KEY    Import existing PEM cert (fullchain) + key,"
   echo "                       e.g. from Traefik/Caddy/Coolify or certbot"
   echo "  --status             Show current TLS status and exit"
   echo "  --help               Show this help message"
+  echo ""
+  echo "Re-issue the server cert (e.g. to add an IP) - the CA is KEPT, so"
+  echo "already distributed ca.pem files stay valid:"
+  echo "  rm tls/server.pem tls/server-cert.pem tls/server-key.pem"
+  echo "  $0 --self-signed --domain db.example.com --ip 203.0.113.10"
   echo ""
   echo "After setup, clients connect with TLS:"
   echo "  mariadb --host <server> --port \${HAPROXY_TLS_PORT:-3316} --ssl --ssl-ca tls/ca.pem ..."
@@ -45,6 +53,7 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     --self-signed) MODE="self-signed"; shift ;;
     --domain)      DOMAIN="$2"; shift 2 ;;
+    --ip)          EXTRA_IPS+=("$2"); shift 2 ;;
     --import)      MODE="import"; IMPORT_CERT="$2"; IMPORT_KEY="$3"; shift 3 ;;
     --status)      MODE="status"; shift ;;
     --help)        usage ;;
@@ -141,18 +150,29 @@ case "$MODE" in
         exit 1
       }
 
-      openssl genrsa -out "$TLS_DIR/ca-key.pem" 4096 2>/dev/null \
-        || gen_failed "CA key"
-      openssl req -new -x509 -days 3650 -key "$TLS_DIR/ca-key.pem" \
-        -out "$TLS_DIR/ca.pem" -subj "/CN=${STACK_NAME}-backup-ca" 2>/dev/null \
-        || gen_failed "CA certificate"
+      # Reuse an existing CA: re-issuing the server cert must NOT invalidate
+      # ca.pem files already distributed to clients
+      if [[ -f "$TLS_DIR/ca.pem" && -f "$TLS_DIR/ca-key.pem" ]]; then
+        log_info "Reusing existing CA ($TLS_DIR/ca.pem) - distributed copies stay valid"
+      else
+        openssl genrsa -out "$TLS_DIR/ca-key.pem" 4096 2>/dev/null \
+          || gen_failed "CA key"
+        openssl req -new -x509 -days 3650 -key "$TLS_DIR/ca-key.pem" \
+          -out "$TLS_DIR/ca.pem" -subj "/CN=${STACK_NAME}-backup-ca" 2>/dev/null \
+          || gen_failed "CA certificate"
+      fi
 
       openssl genrsa -out "$TLS_DIR/server-key.pem" 4096 2>/dev/null \
         || gen_failed "server key"
       openssl req -new -key "$TLS_DIR/server-key.pem" \
         -out "$TLS_DIR/server.csr" -subj "/CN=$DOMAIN" 2>/dev/null \
         || gen_failed "certificate signing request"
-      printf "subjectAltName=DNS:%s,DNS:localhost,IP:127.0.0.1" "$DOMAIN" > "$TLS_DIR/san.ext"
+      SAN="DNS:$DOMAIN,DNS:localhost,IP:127.0.0.1"
+      for extra_ip in "${EXTRA_IPS[@]}"; do
+        SAN="$SAN,IP:$extra_ip"
+      done
+      printf "subjectAltName=%s" "$SAN" > "$TLS_DIR/san.ext"
+      log_info "Certificate SANs: $SAN"
       openssl x509 -req -days 825 -in "$TLS_DIR/server.csr" \
         -CA "$TLS_DIR/ca.pem" -CAkey "$TLS_DIR/ca-key.pem" -CAcreateserial \
         -extfile "$TLS_DIR/san.ext" \
