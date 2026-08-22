@@ -54,7 +54,7 @@ services:
   node1:
     <<: *node-common
     build:
-      context: ..
+      context: .
       dockerfile: docker/Dockerfile.mariadb
     container_name: ${STACK_NAME:-mariadb}-node1
     environment:
@@ -63,12 +63,12 @@ services:
       GALERA_NODE_NAME: node1
       GALERA_NODE_ADDRESS: node1
     volumes:
-      - ../cluster_data/node1:/var/lib/mysql
-      - ../config/my_custom.cnf:/etc/mysql/conf.d/my_custom.cnf:ro
-      - ../config/galera.cnf.template:/etc/mysql/galera.cnf.template:ro
-      - ../scripts/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
-      - ../lib:/usr/local/lib:ro
-      - ../tls:/etc/mysql/tls:ro
+      - ./cluster_data/node1:/var/lib/mysql
+      - ./config/my_custom.cnf:/etc/mysql/conf.d/my_custom.cnf:ro
+      - ./config/galera.cnf.template:/etc/mysql/galera.cnf.template:ro
+      - ./scripts/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+      - ./lib:/usr/local/lib:ro
+      - ./tls:/etc/mysql/tls:ro
     entrypoint: ["/usr/local/bin/entrypoint.sh"]
 
   node2:
@@ -82,12 +82,12 @@ services:
       GALERA_NODE_NAME: node2
       GALERA_NODE_ADDRESS: node2
     volumes:
-      - ../cluster_data/node2:/var/lib/mysql
-      - ../config/my_custom.cnf:/etc/mysql/conf.d/my_custom.cnf:ro
-      - ../config/galera.cnf.template:/etc/mysql/galera.cnf.template:ro
-      - ../scripts/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
-      - ../lib:/usr/local/lib:ro
-      - ../tls:/etc/mysql/tls:ro
+      - ./cluster_data/node2:/var/lib/mysql
+      - ./config/my_custom.cnf:/etc/mysql/conf.d/my_custom.cnf:ro
+      - ./config/galera.cnf.template:/etc/mysql/galera.cnf.template:ro
+      - ./scripts/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+      - ./lib:/usr/local/lib:ro
+      - ./tls:/etc/mysql/tls:ro
     entrypoint: ["/usr/local/bin/entrypoint.sh"]
 
   node3:
@@ -101,12 +101,12 @@ services:
       GALERA_NODE_NAME: node3
       GALERA_NODE_ADDRESS: node3
     volumes:
-      - ../cluster_data/node3:/var/lib/mysql
-      - ../config/my_custom.cnf:/etc/mysql/conf.d/my_custom.cnf:ro
-      - ../config/galera.cnf.template:/etc/mysql/galera.cnf.template:ro
-      - ../scripts/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
-      - ../lib:/usr/local/lib:ro
-      - ../tls:/etc/mysql/tls:ro
+      - ./cluster_data/node3:/var/lib/mysql
+      - ./config/my_custom.cnf:/etc/mysql/conf.d/my_custom.cnf:ro
+      - ./config/galera.cnf.template:/etc/mysql/galera.cnf.template:ro
+      - ./scripts/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+      - ./lib:/usr/local/lib:ro
+      - ./tls:/etc/mysql/tls:ro
     entrypoint: ["/usr/local/bin/entrypoint.sh"]
 
   haproxy:
@@ -127,7 +127,7 @@ services:
       # Directory instead of a single file: haproxy -f <dir> loads all
       # files lexically; runtime drop-ins are untracked so the git tree
       # stays clean (would block git pull / update.sh otherwise).
-      - ../haproxy.d:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./haproxy.d:/usr/local/etc/haproxy/haproxy.cfg:ro
     networks:
       - galera
       - web
