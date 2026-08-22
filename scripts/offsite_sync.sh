@@ -8,7 +8,7 @@ source "./lib/logging.sh"
 LOG_FILE="./logs/offsite.log"
 init_logging
 
-source .env 2>/dev/null || { log_error "Failed to source .env file"; exit 1; }
+source .env 2>/dev/null || { log_error ".env Datei konnte nicht geladen werden."; exit 1; }
 
 # Replicates the backup directory to an offsite target so a disk failure
 # or server compromise cannot take out the database AND all backups.
@@ -48,50 +48,50 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --help)
-      echo "Usage: $0 [OPTIONS]"
+      echo "Nutzung: $0 [OPTIONS]"
       echo ""
-      echo "Replicates $BACKUP_DIR to the offsite target from .env."
+      echo "Repliziert $BACKUP_DIR zum Offsite-Ziel aus der .env-Datei."
       echo ""
-      echo "OPTIONS:"
-      echo "  --dry-run    Show what would be transferred without doing it"
-      echo "  --verify     Verify latest backups first, abort sync on failure"
-      echo "  --help       Show this help message"
+      echo "OPTIONEN:"
+      echo "  --dry-run    Zeigt, was übertragen werden würde (ohne es zu tun)"
+      echo "  --verify     Die neuesten Backups vorher verifizieren; bricht bei Fehlern ab"
+      echo "  --help       Diesen Hilfetext anzeigen"
       echo ""
-      echo "Cron example (hourly, after verifying):"
+      echo "Cron-Beispiel (stündlich, mit vorheriger Überprüfung):"
       echo "  0 * * * * cd $(pwd) && ./scripts/offsite_sync.sh --verify >/dev/null 2>&1"
       echo ""
-      echo "IMPORTANT: back up .backup_encryption_key separately (password"
-      echo "manager / vault) - it is never synced, and without it neither"
-      echo "you nor an attacker can read the offsite backups."
+      echo "WICHTIG: Sichere .backup_encryption_key separat an einem anderen Ort"
+      echo "(Passwort-Manager / Vault). Er wird niemals synchronisiert, und ohne ihn"
+      echo "können weder du noch ein Angreifer die Offsite-Backups lesen."
       exit 0
       ;;
     *)
-      log_error "Unknown option: $1"
+      log_error "Unbekannte Option: $1"
       exit 1
       ;;
   esac
 done
 
 if [[ -z "$OFFSITE_TARGET" ]]; then
-  log_error "OFFSITE_TARGET is not set in .env"
-  log_info "Example (rsync over SSH):  OFFSITE_TARGET=user@backuphost:/backups/mariadb"
-  log_info "Example (rclone):          OFFSITE_METHOD=rclone / OFFSITE_TARGET=remote:mariadb-backups"
+  log_error "OFFSITE_TARGET ist in der .env-Datei nicht gesetzt."
+  log_info "Beispiel (rsync über SSH):  OFFSITE_TARGET=user@backuphost:/backups/mariadb"
+  log_info "Beispiel (rclone):          OFFSITE_METHOD=rclone / OFFSITE_TARGET=remote:mariadb-backups"
   exit 1
 fi
 
 if [[ ! -d "$BACKUP_DIR" ]]; then
-  log_error "Backup directory not found: $BACKUP_DIR - nothing to sync"
+  log_error "Backup-Verzeichnis nicht gefunden: $BACKUP_DIR - nichts zu synchronisieren."
   exit 1
 fi
 
 if [[ "$VERIFY_FIRST" == "true" ]]; then
-  log_info "Verifying latest backups before sync..."
+  log_info "Überprüfe die neuesten Backups vor der Synchronisation..."
   if ! ./scripts/verify_backup.sh --latest >/dev/null 2>&1; then
-    log_error "Backup verification FAILED - not syncing corrupted backups offsite"
+    log_error "Backup-Überprüfung FEHLGESCHLAGEN - beschädigte Backups werden nicht Offsite synchronisiert!"
     log_error "Details: ./scripts/verify_backup.sh --latest"
     exit 1
   fi
-  log_success "Verification passed"
+  log_success "Überprüfung erfolgreich bestanden."
 fi
 
 # The SQL dumps are encrypted, but the binlog copies contain the same data
@@ -110,7 +110,7 @@ stage_encrypted_binlogs() {
       if openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 -in "$bl" -out "$enc" -pass file:"$ENCRYPT_KEY_FILE" 2>/dev/null; then
         staged=$((staged + 1))
       else
-        log_warning "Failed to encrypt binlog for offsite: $(basename "$bl")"
+        log_warning "Fehler beim Verschlüsseln des Binlogs für Offsite: $(basename "$bl")"
         rm -f "$enc"
       fi
     fi
@@ -123,24 +123,24 @@ stage_encrypted_binlogs() {
     [[ -f "$bl" ]] || rm -f "$enc"
   done
 
-  log_info "Binlog offsite staging: $staged newly encrypted (decrypt with encrypt_backup.sh --decrypt)"
+  log_info "Binlog Offsite-Staging: $staged neu verschlüsselt (Entschlüsselung mit encrypt_backup.sh --decrypt)"
 }
 
 SYNC_START=$(date +%s)
-log_info "Starting offsite sync: $BACKUP_DIR -> $OFFSITE_TARGET (method: $OFFSITE_METHOD)"
+log_info "Starte Offsite-Synchronisation: $BACKUP_DIR -> $OFFSITE_TARGET (Methode: $OFFSITE_METHOD)"
 
 EXTRA_EXCLUDES=()
 if [[ "$OFFSITE_ENCRYPT_BINLOGS" == "yes" ]]; then
-  [[ -f "$ENCRYPT_KEY_FILE" ]] || { log_error "Encryption key not found: $ENCRYPT_KEY_FILE"; exit 1; }
+  [[ -f "$ENCRYPT_KEY_FILE" ]] || { log_error "Verschlüsselungs-Key nicht gefunden: $ENCRYPT_KEY_FILE"; exit 1; }
   stage_encrypted_binlogs
   EXTRA_EXCLUDES=(binlogs)
 else
-  log_warning "OFFSITE_ENCRYPT_BINLOGS=no - binlogs will be replicated in PLAINTEXT"
+  log_warning "OFFSITE_ENCRYPT_BINLOGS=no - Binlogs werden UNVERSCHLÜSSELT repliziert!"
 fi
 
 case "$OFFSITE_METHOD" in
   rsync)
-    command -v rsync &>/dev/null || { log_error "rsync is not installed"; exit 1; }
+    command -v rsync &>/dev/null || { log_error "rsync ist nicht installiert."; exit 1; }
 
     RSYNC_ARGS=(-az --partial)
     [[ "$DRY_RUN" == "true" ]] && RSYNC_ARGS+=(--dry-run --verbose)
@@ -158,7 +158,7 @@ case "$OFFSITE_METHOD" in
     fi
     ;;
   rclone)
-    command -v rclone &>/dev/null || { log_error "rclone is not installed"; exit 1; }
+    command -v rclone &>/dev/null || { log_error "rclone ist nicht installiert."; exit 1; }
 
     RCLONE_CMD="copy"
     [[ "$OFFSITE_DELETE" == "yes" ]] && RCLONE_CMD="sync"
@@ -176,7 +176,7 @@ case "$OFFSITE_METHOD" in
     fi
     ;;
   *)
-    log_error "Unknown OFFSITE_METHOD: $OFFSITE_METHOD (use rsync or rclone)"
+    log_error "Unbekannte OFFSITE_METHOD: $OFFSITE_METHOD (Nutze rsync oder rclone)."
     exit 1
     ;;
 esac
@@ -184,16 +184,16 @@ esac
 SYNC_DURATION=$(( $(date +%s) - SYNC_START ))
 
 if [[ "$SYNC_OK" != "true" ]]; then
-  log_error "Offsite sync FAILED after ${SYNC_DURATION}s - backups are NOT replicated"
-  [[ -x ./scripts/notify.sh ]] && ./scripts/notify.sh error "Offsite sync FAILED" "Backups could not be replicated to $OFFSITE_TARGET. They exist locally only!" || true
+  log_error "Offsite-Synchronisation nach ${SYNC_DURATION}s FEHLGESCHLAGEN - Backups wurden NICHT repliziert!"
+  [[ -x ./scripts/notify.sh ]] && ./scripts/notify.sh error "Offsite-Sync FEHLGESCHLAGEN" "Backups konnten nicht auf $OFFSITE_TARGET repliziert werden. Sie existieren nur lokal!" || true
   exit 1
 fi
 
 if [[ "$DRY_RUN" == "true" ]]; then
-  log_info "Dry run completed in ${SYNC_DURATION}s - nothing was transferred"
+  log_info "Dry-Run in ${SYNC_DURATION}s abgeschlossen - es wurde nichts übertragen."
   exit 0
 fi
 
 date +%s > "$STATE_FILE"
-log_success "Offsite sync completed in ${SYNC_DURATION}s"
-log_info "Reminder: keep a copy of .backup_encryption_key in a separate safe place - it is deliberately not synced"
+log_success "Offsite-Synchronisation in ${SYNC_DURATION}s erfolgreich abgeschlossen."
+log_info "Zur Erinnerung: Bewahre eine Kopie von .backup_encryption_key sicher an einem separaten Ort auf (er wird absichtlich nicht mit synchronisiert)!"

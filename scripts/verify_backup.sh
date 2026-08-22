@@ -34,27 +34,27 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --help)
-      echo "Usage: $0 [OPTIONS]"
+      echo "Nutzung: $0 [OPTIONS]"
       echo ""
-      echo "Verifies that encrypted backups are intact and restorable"
-      echo "(checksum + decryption + gzip integrity). No database access needed."
+      echo "Überprüft, ob verschlüsselte Backups intakt und wiederherstellbar sind"
+      echo "(Prüfsumme + Entschlüsselung + GZIP-Integrität). Kein Datenbankzugriff nötig."
       echo ""
-      echo "OPTIONS:"
-      echo "  --latest         Only verify the most recent backup per database"
-      echo "  --database DB    Only verify backups of a specific database"
-      echo "  --key FILE       Encryption key file (default: .backup_encryption_key)"
-      echo "  --help           Show this help message"
+      echo "OPTIONEN:"
+      echo "  --latest         Nur das aktuellste Backup pro Datenbank überprüfen"
+      echo "  --database DB    Nur Backups einer bestimmten Datenbank überprüfen"
+      echo "  --key FILE       Datei mit dem Verschlüsselungs-Key (Standard: .backup_encryption_key)"
+      echo "  --help           Diesen Hilfetext anzeigen"
       exit 0
       ;;
     *)
-      log_error "Unknown option: $1"
+      log_error "Unbekannte Option: $1"
       exit 1
       ;;
   esac
 done
 
 if [[ ! -f "$ENCRYPT_KEY_FILE" ]]; then
-  log_error "Encryption key not found: $ENCRYPT_KEY_FILE"
+  log_error "Verschlüsselungs-Key nicht gefunden: $ENCRYPT_KEY_FILE"
   exit 1
 fi
 
@@ -100,11 +100,11 @@ else
 fi
 
 if [[ ${#BACKUP_FILES[@]} -eq 0 ]]; then
-  log_warning "No backup files found to verify"
+  log_warning "Keine Backup-Dateien zur Überprüfung gefunden."
   exit 0
 fi
 
-log_info "Verifying ${#BACKUP_FILES[@]} backup file(s)..."
+log_info "Überprüfe ${#BACKUP_FILES[@]} Backup-Datei(en)..."
 
 VERIFIED=0
 FAILED=0
@@ -115,7 +115,7 @@ for BACKUP_FILE in "${BACKUP_FILES[@]}"; do
 
   CHECKSUM_RESULT=$(verify_checksum "$BACKUP_FILE")
   if [[ "$CHECKSUM_RESULT" == "fail" ]]; then
-    log_error "$NAME: checksum MISMATCH - file is corrupted"
+    log_error "$NAME: Prüfsumme STIMMT NICHT ÜBEREIN - Datei ist beschädigt!"
     FAILED=$((FAILED + 1))
     continue
   fi
@@ -130,21 +130,21 @@ for BACKUP_FILE in "${BACKUP_FILES[@]}"; do
   done
 
   if [[ "$DECRYPT_OK" == "true" ]]; then
-    log_success "$NAME: OK$([ "$CHECKSUM_RESULT" == "none" ] && echo " (no checksum on file)")"
+    log_success "$NAME: OK$([ "$CHECKSUM_RESULT" == "none" ] && echo " (keine Prüfsumme in Datei)")"
     VERIFIED=$((VERIFIED + 1))
   else
-    log_error "$NAME: decryption or gzip integrity test FAILED"
+    log_error "$NAME: Entschlüsselung oder GZIP-Integritätstest FEHLGESCHLAGEN"
     FAILED=$((FAILED + 1))
   fi
 done
 
 echo
-log_info "=== VERIFY SUMMARY ==="
-log_info "Verified OK: $VERIFIED"
-[[ $NO_CHECKSUM -gt 0 ]] && log_warning "Without checksum: $NO_CHECKSUM"
+log_info "=== VERIFY ZUSAMMENFASSUNG ==="
+log_info "Erfolgreich überprüft: $VERIFIED"
+[[ $NO_CHECKSUM -gt 0 ]] && log_warning "Ohne Prüfsumme: $NO_CHECKSUM"
 if [[ $FAILED -gt 0 ]]; then
-  log_error "Failed: $FAILED - these backups are NOT restorable!"
+  log_error "Fehlgeschlagen: $FAILED - Diese Backups sind NICHT wiederherstellbar!"
   exit 1
 fi
 
-log_success "All backups verified successfully"
+log_success "Alle Backups wurden erfolgreich überprüft."

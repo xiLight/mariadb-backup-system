@@ -70,39 +70,39 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --help)
-      echo "MariaDB Backup Script v$BACKUP_VERSION"
+      echo "MariaDB Backup Skript v$BACKUP_VERSION"
       echo ""
-      echo "Usage: $0 [OPTIONS]"
+      echo "Nutzung: $0 [OPTIONS]"
       echo ""
-      echo "Backup modes:"
-      echo "  --full                 Create full backup (default)"
-      echo "  --incremental          Create incremental backup (binlog based)"
+      echo "Backup-Modi:"
+      echo "  --full                 Vollständiges Backup erstellen (Standard)"
+      echo "  --incremental          Inkrementelles Backup erstellen (Binlog-basiert)"
       echo ""
-      echo "Options:"
-      echo "  --database DB          Backup specific database only"
-      echo "  --include-empty        Include databases with no tables"
-      echo "  --key FILE             Encryption key file (default: .backup_encryption_key)"
-      echo "  --no-compress          Don't compress backup files"
-      echo "  --no-checksums         Don't create checksum files"
-      echo "  --verify               Verify each backup after creation (decrypt + integrity test)"
-      echo "  --help                 Show this help message"
+      echo "Optionen:"
+      echo "  --database DB          Nur eine bestimmte Datenbank sichern"
+      echo "  --include-empty        Auch Datenbanken ohne Tabellen sichern"
+      echo "  --key FILE             Datei mit dem Verschlüsselungs-Key (Standard: .backup_encryption_key)"
+      echo "  --no-compress          Backup-Dateien nicht komprimieren"
+      echo "  --no-checksums         Keine Prüfsummen (Checksums) erstellen"
+      echo "  --verify               Jedes Backup nach Erstellung überprüfen (Entschlüsselung + Integritätstest)"
+      echo "  --help                 Diesen Hilfetext anzeigen"
       echo ""
-      echo "Environment variables (from .env):"
-      echo "  MARIADB_CONTAINER      MariaDB container name"
-      echo "  MARIADB_ROOT_PASSWORD  MariaDB root password"
-      echo "  BACKUP_DIR             Backup directory"
-      echo "  BINLOG_DIR             Binary log backup directory"
+      echo "Umgebungsvariablen (aus der .env):"
+      echo "  MARIADB_CONTAINER      Name des MariaDB-Containers"
+      echo "  MARIADB_ROOT_PASSWORD  MariaDB Root-Passwort"
+      echo "  BACKUP_DIR             Haupt-Backupverzeichnis"
+      echo "  BINLOG_DIR             Verzeichnis für Binary-Log-Backups"
       echo ""
       exit 0
       ;;
     *)
-      handle_error 2 "Unknown option: $1"
+      handle_error 2 "Unbekannte Option: $1"
       ;;
   esac
 done
 
 BACKUP_START_TIME=$(date +%s)
-log_info "Starting backup process (version $BACKUP_VERSION), mode: $BACKUP_MODE"
+log_info "Starte Backup-Prozess (Version $BACKUP_VERSION), Modus: $BACKUP_MODE"
 
 # pigz compresses on all CPU cores and produces standard gzip output
 if command -v pigz &>/dev/null; then
@@ -112,35 +112,35 @@ else
 fi
 
 for dir in "$BACKUP_DIR" "$BINLOG_BACKUP_DIR" "$BINLOG_INFO_DIR" "$CHECKSUM_DIR" "$INCR_INFO_DIR"; do
-  mkdir -p "$dir" || handle_error 3 "Failed to create directory: $dir"
+  mkdir -p "$dir" || handle_error 3 "Fehler beim Erstellen des Verzeichnisses: $dir"
 done
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 if [[ ! -f "$ENCRYPT_KEY_FILE" ]]; then
-  log_warning "Encryption key not found, generating new one: $ENCRYPT_KEY_FILE"
-  openssl rand -base64 32 > "$ENCRYPT_KEY_FILE" || handle_error 4 "Failed to generate encryption key"
+  log_warning "Verschlüsselungs-Key nicht gefunden, generiere einen neuen: $ENCRYPT_KEY_FILE"
+  openssl rand -base64 32 > "$ENCRYPT_KEY_FILE" || handle_error 4 "Konnte keinen Verschlüsselungs-Key generieren."
   chmod 600 "$ENCRYPT_KEY_FILE"
-  log_warning "New encryption key created at $ENCRYPT_KEY_FILE - KEEP THIS SAFE! Without it, backups cannot be restored."
+  log_warning "Neuer Verschlüsselungs-Key unter $ENCRYPT_KEY_FILE erstellt - GUT AUFBEWAHREN! Ohne diesen Key können Backups nicht wiederhergestellt werden."
 fi
 
 # --- Database connection --------------------------------------------------
 # The password is passed via MYSQL_PWD so it never shows up in process lists.
-log_info "Testing database connection to container '$MARIADB_CONTAINER'..."
+log_info "Teste Datenbankverbindung zum Container '$MARIADB_CONTAINER'..."
 
 DOCKER_ENV=(-e MYSQL_PWD="$MARIADB_ROOT_PASSWORD")
 CLIENT_ARGS=(-u root)
 
 if docker exec "${DOCKER_ENV[@]}" "$MARIADB_CONTAINER" mariadb "${CLIENT_ARGS[@]}" -e "SELECT 1;" &>/dev/null; then
-  log_success "Database connection successful (socket)"
+  log_success "Datenbankverbindung erfolgreich (Socket)."
 elif docker exec "$MARIADB_CONTAINER" mariadb -u root -e "SELECT 1;" &>/dev/null; then
   DOCKER_ENV=()
-  log_success "Database connection successful (socket, no password)"
+  log_success "Datenbankverbindung erfolgreich (Socket, ohne Passwort)."
 elif docker exec -e MYSQL_PWD="$MARIADB_ROOT_PASSWORD" "$MARIADB_CONTAINER" mariadb -u root -h 127.0.0.1 -P 3306 -e "SELECT 1;" &>/dev/null; then
   CLIENT_ARGS+=(-h 127.0.0.1 -P 3306)
-  log_success "Database connection successful (TCP)"
+  log_success "Datenbankverbindung erfolgreich (TCP)."
 else
-  handle_error 5 "Cannot connect to MariaDB container: $MARIADB_CONTAINER"
+  handle_error 5 "Kann keine Verbindung zum MariaDB-Container '$MARIADB_CONTAINER' herstellen."
 fi
 
 db_exec() {
@@ -166,7 +166,7 @@ dump_database() {
     return 0
   fi
 
-  log_warning "Dump with binary log features failed, using fallback (no binlog coordinates)"
+  log_warning "Dump mit Binlog-Features fehlgeschlagen, nutze Fallback (ohne Binlog-Koordinaten)."
   db_dump "${opts[@]}" > "$output_file"
 }
 
@@ -192,7 +192,7 @@ get_binlog_position() {
   if [[ -n "$latest" ]]; then
     BINLOG_FILE=$(basename "$latest")
     BINLOG_POS="4"
-    log_info "Binary log position estimated from filesystem: $BINLOG_FILE:$BINLOG_POS"
+    log_info "Binary Log-Position aus Dateisystem geschätzt: $BINLOG_FILE:$BINLOG_POS"
     return 0
   fi
 
@@ -202,18 +202,18 @@ get_binlog_position() {
 save_binlog_position() {
   local database="$1" file="$2" pos="$3"
   echo "$file $pos" > "$BINLOG_INFO_DIR/last_binlog_info_${database}_${TIMESTAMP}.txt"
-  log_success "Binary log position saved for $database: $file:$pos"
+  log_success "Binary Log-Position für $database gespeichert: $file:$pos"
 }
 
 # Copy binlog files from the container into the local backup directory.
 # Incremental: files that already exist locally with the same size are
 # skipped, so only new/growing binlogs are transferred.
 sync_binlogs() {
-  log_info "Syncing binary logs from container..."
+  log_info "Synchronisiere Binary Logs aus dem Container..."
   local listing
   listing=$(docker exec "$MARIADB_CONTAINER" sh -c "stat -c '%s %n' $CONTAINER_DATADIR/mysql-bin.* 2>/dev/null")
   if [[ -z "$listing" ]]; then
-    log_warning "No binary logs found in container. Incremental backups will not work until binary logging is enabled."
+    log_warning "Keine Binary Logs im Container gefunden. Inkrementelle Backups funktionieren erst, wenn Binary Logging aktiviert ist."
     return 1
   fi
 
@@ -233,10 +233,10 @@ sync_binlogs() {
     if docker cp "$MARIADB_CONTAINER:$f" "$BINLOG_BACKUP_DIR/" >/dev/null 2>&1; then
       copied=$((copied + 1))
     else
-      log_warning "Failed to copy binlog: $name"
+      log_warning "Fehler beim Kopieren des Binlogs: $name"
     fi
   done <<< "$listing"
-  log_success "Binlog sync: $copied copied, $skipped unchanged"
+  log_success "Binlog-Sync: $copied kopiert, $skipped unverändert."
 }
 
 # Decrypt + integrity-test an encrypted backup without writing plaintext to disk.
@@ -256,13 +256,13 @@ verify_backup_file() {
 # --- Collect databases ----------------------------------------------------
 if [[ -n "$SPECIFIC_DATABASE" ]]; then
   if ! db_exec -e "USE \`$SPECIFIC_DATABASE\`;" &>/dev/null; then
-    handle_error 6 "Database '$SPECIFIC_DATABASE' does not exist"
+    handle_error 6 "Datenbank '$SPECIFIC_DATABASE' existiert nicht."
   fi
   DATABASES=("$SPECIFIC_DATABASE")
 else
   mapfile -t DATABASES < <(db_query "SHOW DATABASES;" 2>/dev/null | grep -v -E "^(information_schema|performance_schema|mysql|sys)$")
 fi
-log_info "Found ${#DATABASES[@]} database(s) to backup: ${DATABASES[*]}"
+log_info "${#DATABASES[@]} Datenbank(en) für das Backup gefunden: ${DATABASES[*]}"
 
 TOTAL_DATABASES=0
 SUCCESSFUL_BACKUPS=0
@@ -275,12 +275,12 @@ sync_binlogs
 # --- Backup loop ----------------------------------------------------------
 for DB in "${DATABASES[@]}"; do
   TOTAL_DATABASES=$((TOTAL_DATABASES + 1))
-  log_info "Processing database: $DB"
+  log_info "Verarbeite Datenbank: $DB"
 
   if [[ "$INCLUDE_EMPTY_DATABASES" == "false" ]]; then
     TABLE_COUNT=$(db_query "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '$DB';" 2>/dev/null || echo "0")
     if [[ "$TABLE_COUNT" == "0" ]]; then
-      log_warning "Database $DB has no tables, skipping (use --include-empty to backup anyway)"
+      log_warning "Datenbank $DB hat keine Tabellen, wird übersprungen (nutze --include-empty, um sie trotzdem zu sichern)."
       SKIPPED_DATABASES=$((SKIPPED_DATABASES + 1))
       continue
     fi
@@ -291,9 +291,9 @@ for DB in "${DATABASES[@]}"; do
   SAVE_BINLOG_POS=""
 
   if [[ "$BACKUP_MODE" == "full" ]]; then
-    log_info "Creating full backup: $(basename "$BACKUP_FILE")"
+    log_info "Erstelle vollständiges Backup: $(basename "$BACKUP_FILE")"
     if ! dump_database "$DB" "$BACKUP_FILE"; then
-      log_error "Failed to create backup for database: $DB"
+      log_error "Fehler beim Sichern der Datenbank: $DB"
       rm -f "$BACKUP_FILE"
       FAILED_BACKUPS=$((FAILED_BACKUPS + 1))
       continue
@@ -312,25 +312,25 @@ for DB in "${DATABASES[@]}"; do
     # saved position (full or incremental).
     LAST_INFO_FILE=$(find "$BINLOG_INFO_DIR" -name "last_binlog_info_${DB}_*.txt" -type f | sort | tail -1)
     if [[ -z "$LAST_INFO_FILE" ]]; then
-      log_error "No previous backup position found for $DB. Run a full backup first."
+      log_error "Keine vorherige Backup-Position für $DB gefunden. Bitte zuerst ein Full-Backup machen."
       FAILED_BACKUPS=$((FAILED_BACKUPS + 1))
       continue
     fi
 
     read -r LAST_BINLOG_FILE LAST_BINLOG_POS < "$LAST_INFO_FILE"
-    log_info "Last backup position: $LAST_BINLOG_FILE:$LAST_BINLOG_POS"
+    log_info "Letzte Backup-Position: $LAST_BINLOG_FILE:$LAST_BINLOG_POS"
 
     if ! get_binlog_position; then
-      log_error "Cannot determine current binary log position for $DB"
+      log_error "Kann die aktuelle Binary Log-Position für $DB nicht bestimmen."
       FAILED_BACKUPS=$((FAILED_BACKUPS + 1))
       continue
     fi
     CURRENT_BINLOG_FILE="$BINLOG_FILE"
     CURRENT_BINLOG_POS="$BINLOG_POS"
-    log_info "Current position: $CURRENT_BINLOG_FILE:$CURRENT_BINLOG_POS"
+    log_info "Aktuelle Position: $CURRENT_BINLOG_FILE:$CURRENT_BINLOG_POS"
 
     if [[ "$LAST_BINLOG_FILE" == "$CURRENT_BINLOG_FILE" && "$LAST_BINLOG_POS" == "$CURRENT_BINLOG_POS" ]]; then
-      log_info "No changes since last backup, skipping $DB"
+      log_info "Keine Änderungen seit dem letzten Backup, überspringe $DB."
       SKIPPED_DATABASES=$((SKIPPED_DATABASES + 1))
       continue
     fi
@@ -347,12 +347,12 @@ for DB in "${DATABASES[@]}"; do
     done < <(find "$BINLOG_BACKUP_DIR" -maxdepth 1 -type f -name "mysql-bin.*" ! -name "*.index" ! -name "*.idx" | sort -V)
 
     if [[ ${#BINLOG_FILES[@]} -eq 0 ]]; then
-      log_error "No binary log files found in range $LAST_BINLOG_FILE..$CURRENT_BINLOG_FILE"
+      log_error "Keine Binary Log-Dateien im Bereich $LAST_BINLOG_FILE..$CURRENT_BINLOG_FILE gefunden."
       FAILED_BACKUPS=$((FAILED_BACKUPS + 1))
       continue
     fi
 
-    log_info "Processing ${#BINLOG_FILES[@]} binary log file(s) for incremental backup"
+    log_info "Verarbeite ${#BINLOG_FILES[@]} Binary Log-Datei(en) für das inkrementelle Backup..."
     : > "$BACKUP_FILE"
     docker exec "$MARIADB_CONTAINER" mkdir -p /tmp/binlogs
 
@@ -366,20 +366,20 @@ for DB in "${DATABASES[@]}"; do
       docker cp "$bl_file" "$MARIADB_CONTAINER:/tmp/binlogs/$bl_name" >/dev/null 2>&1
       if docker exec "$MARIADB_CONTAINER" mariadb-binlog "${BINLOG_OPTS[@]}" \
         --database="$DB" "/tmp/binlogs/$bl_name" >> "$BACKUP_FILE" 2>/dev/null; then
-        log_info "Processed binary log: $bl_name"
+        log_info "Binary Log erfolgreich verarbeitet: $bl_name"
       else
-        log_warning "Failed to process binary log: $bl_name"
+        log_warning "Fehler beim Verarbeiten des Binary Logs: $bl_name"
       fi
       docker exec "$MARIADB_CONTAINER" rm -f "/tmp/binlogs/$bl_name"
     done
 
     if [[ ! -s "$BACKUP_FILE" ]]; then
-      log_info "Incremental backup is empty, no relevant changes for $DB"
+      log_info "Inkrementelles Backup ist leer, keine relevanten Änderungen für $DB."
       SKIPPED_DATABASES=$((SKIPPED_DATABASES + 1))
       rm -f "$BACKUP_FILE"
       continue
     fi
-    log_success "Incremental backup created: $(basename "$BACKUP_FILE")"
+    log_success "Inkrementelles Backup erstellt: $(basename "$BACKUP_FILE")"
 
     # The next incremental must start exactly where this one stopped
     SAVE_BINLOG_FILE="$CURRENT_BINLOG_FILE"
@@ -393,7 +393,7 @@ for DB in "${DATABASES[@]}"; do
     if "$COMPRESS_CMD" "$BACKUP_FILE"; then
       BACKUP_FILE="${BACKUP_FILE}.gz"
     else
-      log_error "Failed to compress backup for $DB"
+      log_error "Konnte das Backup für $DB nicht komprimieren."
       FAILED_BACKUPS=$((FAILED_BACKUPS + 1))
       rm -f "$BACKUP_FILE"
       continue
@@ -405,9 +405,9 @@ for DB in "${DATABASES[@]}"; do
   if ./scripts/encrypt_backup.sh "${ENCRYPT_ARGS[@]}"; then
     rm -f "$BACKUP_FILE"
     BACKUP_FILE="${BACKUP_FILE}.enc"
-    log_success "Backup encrypted: $(basename "$BACKUP_FILE")"
+    log_success "Backup verschlüsselt: $(basename "$BACKUP_FILE")"
   else
-    log_error "Failed to encrypt backup for $DB"
+    log_error "Verschlüsselung für $DB fehlgeschlagen."
     rm -f "$BACKUP_FILE"
     FAILED_BACKUPS=$((FAILED_BACKUPS + 1))
     continue
@@ -415,9 +415,9 @@ for DB in "${DATABASES[@]}"; do
 
   if [[ "$VERIFY_BACKUPS" == "true" ]]; then
     if verify_backup_file "$BACKUP_FILE"; then
-      log_success "Backup verified: $(basename "$BACKUP_FILE")"
+      log_success "Backup erfolgreich verifiziert: $(basename "$BACKUP_FILE")"
     else
-      log_error "Backup verification FAILED for $(basename "$BACKUP_FILE")"
+      log_error "Backup-Verifizierung FEHLGESCHLAGEN für $(basename "$BACKUP_FILE")"
       FAILED_BACKUPS=$((FAILED_BACKUPS + 1))
       continue
     fi
@@ -432,11 +432,11 @@ for DB in "${DATABASES[@]}"; do
   if [[ -n "$SAVE_BINLOG_FILE" ]]; then
     save_binlog_position "$DB" "$SAVE_BINLOG_FILE" "$SAVE_BINLOG_POS"
   else
-    log_warning "Could not determine binary log position. Incremental backups will not work until binary logging is enabled."
+    log_warning "Konnte die Binary Log-Position nicht ermitteln. Inkrementelle Backups funktionieren erst, wenn Binary Logging aktiviert ist."
   fi
 
   SUCCESSFUL_BACKUPS=$((SUCCESSFUL_BACKUPS + 1))
-  log_success "Backup completed for database: $DB"
+  log_success "Backup für Datenbank $DB abgeschlossen."
 done
 
 # --- Users & grants -------------------------------------------------------
@@ -444,7 +444,7 @@ done
 # grants would be lost in a full disaster. Dump them separately.
 if [[ "$BACKUP_MODE" == "full" && -z "$SPECIFIC_DATABASE" ]]; then
   GRANTS_FILE="$BACKUP_DIR/system_grants_full_${TIMESTAMP}.sql"
-  log_info "Backing up users and grants..."
+  log_info "Sichere User und Berechtigungen (Grants)..."
 
   if db_dump --system=users > "$GRANTS_FILE" 2>/dev/null && [[ -s "$GRANTS_FILE" ]]; then
     "$COMPRESS_CMD" "$GRANTS_FILE" && GRANTS_FILE="${GRANTS_FILE}.gz"
@@ -452,14 +452,14 @@ if [[ "$BACKUP_MODE" == "full" && -z "$SPECIFIC_DATABASE" ]]; then
     [[ "$CREATE_CHECKSUMS" == "false" ]] && ENCRYPT_ARGS+=(--no-checksum)
     if ./scripts/encrypt_backup.sh "${ENCRYPT_ARGS[@]}" >/dev/null; then
       rm -f "$GRANTS_FILE"
-      log_success "Users and grants backed up: $(basename "$GRANTS_FILE").enc"
+      log_success "User und Berechtigungen gesichert: $(basename "$GRANTS_FILE").enc"
     else
       rm -f "$GRANTS_FILE"
-      log_warning "Failed to encrypt grants backup"
+      log_warning "Fehler beim Verschlüsseln der Berechtigungs-Backups."
     fi
   else
     rm -f "$GRANTS_FILE"
-    log_warning "Could not dump users/grants (mariadb-dump --system=users failed)"
+    log_warning "Konnte User/Berechtigungen nicht sichern (mariadb-dump --system=users fehlgeschlagen)."
   fi
 fi
 
@@ -475,30 +475,30 @@ else
 fi
 
 echo
-log_info "=== BACKUP SUMMARY ==="
-log_info "Backup mode: $BACKUP_MODE"
-log_info "Timestamp: $TIMESTAMP"
-log_info "Duration: ${BACKUP_DURATION}s"
-log_info "Databases processed: $TOTAL_DATABASES (success: $SUCCESSFUL_BACKUPS, failed: $FAILED_BACKUPS, skipped: $SKIPPED_DATABASES)"
-log_info "Total backup size (uncompressed): $SIZE_HR"
-log_info "Compression: $([ "$COMPRESS_BACKUPS" == "true" ] && echo "enabled" || echo "disabled"), Encryption: enabled, Checksums: $([ "$CREATE_CHECKSUMS" == "true" ] && echo "enabled" || echo "disabled"), Verify: $([ "$VERIFY_BACKUPS" == "true" ] && echo "enabled" || echo "disabled")"
+log_info "=== BACKUP ZUSAMMENFASSUNG ==="
+log_info "Modus: $BACKUP_MODE"
+log_info "Zeitstempel: $TIMESTAMP"
+log_info "Dauer: ${BACKUP_DURATION}s"
+log_info "Verarbeitete Datenbanken: $TOTAL_DATABASES (Erfolgreich: $SUCCESSFUL_BACKUPS, Fehlgeschlagen: $FAILED_BACKUPS, Übersprungen: $SKIPPED_DATABASES)"
+log_info "Gesamtgröße des Backups (unkomprimiert): $SIZE_HR"
+log_info "Komprimierung: $([ "$COMPRESS_BACKUPS" == "true" ] && echo "aktiviert" || echo "deaktiviert"), Verschlüsselung: aktiviert, Checksums: $([ "$CREATE_CHECKSUMS" == "true" ] && echo "aktiviert" || echo "deaktiviert"), Verifizierung: $([ "$VERIFY_BACKUPS" == "true" ] && echo "aktiviert" || echo "deaktiviert")"
 
 if [[ $FAILED_BACKUPS -gt 0 ]]; then
-  log_error "$FAILED_BACKUPS backup(s) failed. Check $LOG_FILE for details."
-  [[ -x ./scripts/notify.sh ]] && ./scripts/notify.sh error "Backup FAILED" "$FAILED_BACKUPS of $TOTAL_DATABASES database backup(s) failed (mode: $BACKUP_MODE). Check logs/backup.log" || true
+  log_error "$FAILED_BACKUPS Backup(s) fehlgeschlagen. Überprüfe $LOG_FILE für Details."
+  [[ -x ./scripts/notify.sh ]] && ./scripts/notify.sh error "Backup FEHLGESCHLAGEN" "$FAILED_BACKUPS von $TOTAL_DATABASES Datenbank-Backups sind fehlgeschlagen (Modus: $BACKUP_MODE). Prüfe logs/backup.log" || true
   exit 1
 fi
 
-log_success "All backups completed successfully! Encrypted files stored in: $BACKUP_DIR"
+log_success "Alle Backups erfolgreich abgeschlossen! Die verschlüsselten Dateien liegen in: $BACKUP_DIR"
 [[ -x ./scripts/notify.sh ]] && ./scripts/notify.sh --heartbeat || true
 
 # Optional offsite replication after a fully successful run
 if [[ "${OFFSITE_AUTO:-no}" == "yes" && $SUCCESSFUL_BACKUPS -gt 0 ]]; then
-  log_info "OFFSITE_AUTO enabled - replicating backups offsite..."
+  log_info "OFFSITE_AUTO ist aktiv - repliziere Backups an den externen Speicher..."
   if ./scripts/offsite_sync.sh; then
-    log_success "Offsite replication completed"
+    log_success "Offsite-Replikation abgeschlossen."
   else
-    log_error "Offsite replication failed - backups exist locally but are NOT replicated"
+    log_error "Offsite-Replikation fehlgeschlagen - Backups sind lokal vorhanden, wurden aber NICHT repliziert!"
     exit 1
   fi
 fi

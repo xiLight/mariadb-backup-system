@@ -12,20 +12,20 @@ source .env 2>/dev/null || { log_error "Failed to source .env file"; exit 1; }
 source "./lib/cluster.sh"
 
 usage() {
-  echo "Usage: $0 COMMAND"
+  echo "Nutzung: $0 COMMAND"
   echo ""
-  echo "Galera cluster management:"
-  echo "  init            First-time cluster setup (bootstraps node1, joins node2/3, starts HAProxy)"
-  echo "  start           Start an already initialized cluster"
-  echo "  stop            Stop the whole cluster (HAProxy first, then nodes)"
-  echo "  status          Show cluster and replication status"
-  echo "  reinit [--yes]  Tear down and rebuild the cluster from scratch:"
-  echo "                  fetches a fresh subnet via Portolan, DELETES all cluster"
-  echo "                  data, then runs a clean init"
-  echo "  drill           Controlled failover test: stops node1, verifies the"
-  echo "                  cluster keeps serving, brings node1 back"
+  echo "Galera Cluster Management:"
+  echo "  init            Ersteinrichtung des Clusters (Bootstrapt Node1, verbindet Node2/3, startet HAProxy)"
+  echo "  start           Startet einen bereits initialisierten Cluster"
+  echo "  stop            Stoppt den gesamten Cluster (erst HAProxy, dann Nodes)"
+  echo "  status          Zeigt Cluster- und Replikations-Status"
+  echo "  reinit [--yes]  Kompletter Abriss und Neuaufbau des Clusters von Grund auf:"
+  echo "                  Holt ein neues Subnetz via Portolan, LÖSCHT alle Cluster-Daten"
+  echo "                  und führt dann einen sauberen 'init' durch"
+  echo "  drill           Kontrollierter Failover-Test: Stoppt Node1, prüft ob der"
+  echo "                  Cluster weiterarbeitet, und bringt Node1 wieder online"
   echo ""
-  echo "Rolling updates: ./scripts/update.sh | Self-healing: ./scripts/heal.sh"
+  echo "Rolling Updates: ./scripts/update.sh | Self-Healing: ./scripts/heal.sh"
   exit 0
 }
 
@@ -48,10 +48,10 @@ check_subnet_conflict() {
   for net in $(docker network ls --format '{{.Name}}'); do
     [[ "$net" == "$own_net" ]] && continue
     if docker network inspect "$net" 2>/dev/null | grep -q "\"Subnet\": \"$subnet\""; then
-      log_error "Network '$net' already uses subnet $subnet (your GALERA_SUBNET)."
-      log_info "Usually a leftover from an old stack name. Fix with:"
+      log_error "Netzwerk '$net' nutzt bereits das Subnetz $subnet (dein GALERA_SUBNET)."
+      log_info "Das ist meist ein Überbleibsel eines alten Stacks. Behebe es mit:"
       log_info "  docker network rm $net"
-      log_info "or set a different GALERA_SUBNET in .env"
+      log_info "oder wähle ein anderes GALERA_SUBNET in der .env-Datei."
       return 1
     fi
   done
@@ -60,56 +60,56 @@ check_subnet_conflict() {
 
 cmd_init() {
   if [[ -f "./cluster_data/node1/grastate.dat" ]]; then
-    log_error "Cluster already initialized (cluster_data/node1/grastate.dat exists)."
-    log_info "Use './scripts/cluster.sh start' to start it, or './scripts/heal.sh' to recover a broken cluster."
+    log_error "Cluster ist bereits initialisiert (cluster_data/node1/grastate.dat existiert)."
+    log_info "Nutze './scripts/cluster.sh start' zum Starten, oder './scripts/heal.sh' um einen kaputten Cluster wiederherzustellen."
     exit 1
   fi
 
-  log_info "Initializing new 3-node Galera cluster..."
+  log_info "Initialisiere neuen 3-Node Galera-Cluster..."
 
   check_subnet_conflict || exit 1
 
   mkdir -p cluster_data/node1 cluster_data/node2 cluster_data/node3
   touch cluster_data/node1/force_bootstrap
 
-  log_info "Building cluster image..."
-  compose_cluster build node1 || { log_error "Image build failed"; exit 1; }
+  log_info "Erstelle Cluster-Image..."
+  compose_cluster build node1 || { log_error "Image-Build fehlgeschlagen!"; exit 1; }
 
-  log_info "Bootstrapping node1..."
+  log_info "Bootstrapping für Node1 läuft..."
   compose_cluster up -d node1 || {
-    log_error "Failed to create/start node1 - see the docker error above"
+    log_error "Node1 konnte nicht erstellt/gestartet werden - siehe Docker-Fehlermeldung oben."
     exit 1
   }
 
   wait_node_synced node1 || {
-    log_error "Bootstrap failed. Check: docker logs $(node_container node1)"
+    log_error "Bootstrap fehlgeschlagen. Prüfe Logs mit: docker logs $(node_container node1)"
     exit 1
   }
 
-  log_info "Joining node2 and node3 (initial state transfer may take a while)..."
+  log_info "Füge Node2 und Node3 hinzu (initialer State-Transfer kann etwas dauern)..."
   compose_cluster up -d node2 node3 || {
-    log_error "Failed to create/start node2/node3 - see the docker error above"
+    log_error "Node2/Node3 konnten nicht erstellt/gestartet werden - siehe Docker-Fehlermeldung oben."
     exit 1
   }
 
   wait_node_synced node2 || exit 1
   wait_node_synced node3 || exit 1
 
-  log_info "Starting HAProxy..."
+  log_info "Starte HAProxy..."
   compose_cluster up -d haproxy
 
-  log_success "Cluster initialized: 3 nodes synced, HAProxy on port ${HAPROXY_PORT:-3306} (stats: ${HAPROXY_STATS_PORT:-8404})"
+  log_success "Cluster erfolgreich initialisiert: 3 Nodes synchronisiert, HAProxy auf Port ${HAPROXY_PORT:-3306} (Stats: ${HAPROXY_STATS_PORT:-8404})"
   print_cluster_status
 }
 
 cmd_start() {
   if [[ ! -f "./cluster_data/node1/grastate.dat" && ! -f "./cluster_data/node2/grastate.dat" && ! -f "./cluster_data/node3/grastate.dat" ]]; then
-    log_error "Cluster not initialized yet. Run: ./scripts/cluster.sh init"
+    log_error "Cluster ist noch nicht initialisiert. Führe aus: ./scripts/cluster.sh init"
     exit 1
   fi
 
   if [[ $(cluster_healthy_count) -gt 0 ]]; then
-    log_info "Cluster is already (partially) running - starting remaining services"
+    log_info "Cluster läuft bereits (teilweise) - starte verbleibende Services."
     compose_cluster up -d
     print_cluster_status
     return 0
@@ -117,27 +117,27 @@ cmd_start() {
 
   # All nodes are down: this is a full-cluster cold start, which needs a
   # bootstrap node. heal.sh knows how to pick the node with the newest data.
-  log_info "All nodes are down - delegating cold start to heal.sh (safe bootstrap)"
+  log_info "Alle Nodes sind offline - übergebe Cold-Start an heal.sh (Safe Bootstrap)."
   ./scripts/heal.sh --recover
 }
 
 cmd_stop() {
-  log_info "Stopping cluster..."
+  log_info "Stoppe Cluster..."
   compose_cluster stop haproxy
   compose_cluster stop node3 node2 node1
-  log_success "Cluster stopped. Restart with: ./scripts/cluster.sh start"
+  log_success "Cluster gestoppt. Neustart mit: ./scripts/cluster.sh start"
 }
 
 # Full teardown + clean re-initialization with a Portolan-managed subnet.
 # DESTRUCTIVE: removes all cluster data - only the encrypted backups survive.
 cmd_reinit() {
-  log_warning "Re-initialization DELETES the whole cluster including ALL databases in it!"
-  log_info "Only ./backups (encrypted) survives. A fresh cluster is built afterwards."
+  log_warning "Die Neu-Initialisierung LÖSCHT den gesamten Cluster inklusive ALLER darin enthaltenen Datenbanken!"
+  log_info "Nur ./backups (verschlüsselt) bleibt erhalten. Danach wird ein frischer Cluster aufgebaut."
 
   if [[ "$1" != "--yes" ]]; then
-    read -p "Really delete and re-initialize the cluster? (type 'yes' to confirm): " confirm
+    read -p "Wirklich alles löschen und neu initialisieren? (Tippe 'yes' zum Bestätigen): " confirm
     if [[ "$confirm" != "yes" ]]; then
-      log_info "Re-initialization cancelled"
+      log_info "Neu-Initialisierung abgebrochen."
       exit 0
     fi
   fi
@@ -150,23 +150,23 @@ cmd_reinit() {
     if [[ "$new_subnet" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]]; then
       set_env_value GALERA_SUBNET "$new_subnet"
       GALERA_SUBNET="$new_subnet"
-      log_success "New Galera subnet from Portolan: $new_subnet"
+      log_success "Neues Galera-Subnetz von Portolan bezogen: $new_subnet"
     else
-      log_warning "Portolan returned no usable subnet (got: '${new_subnet:-empty}')"
-      log_warning "Keeping GALERA_SUBNET=${GALERA_SUBNET:-172.28.66.0/24}"
+      log_warning "Portolan lieferte kein nutzbares Subnetz zurück (Ergebnis: '${new_subnet:-empty}')."
+      log_warning "Behalte GALERA_SUBNET=${GALERA_SUBNET:-172.28.66.0/24}"
     fi
   else
-    log_warning "Portolan not installed - keeping GALERA_SUBNET=${GALERA_SUBNET:-172.28.66.0/24}"
+    log_warning "Portolan ist nicht installiert - behalte GALERA_SUBNET=${GALERA_SUBNET:-172.28.66.0/24}"
   fi
 
-  log_info "Tearing down the old cluster (containers + network)..."
-  compose_cluster down || log_warning "compose down reported errors - continuing with forced cleanup"
+  log_info "Reiße alten Cluster ab (Container + Netzwerk)..."
+  compose_cluster down || log_warning "compose down hat Fehler gemeldet - erzwinge Cleanup trotzdem."
 
   # Belt and braces: compose down can leave the network behind when the
   # subnet in .env changed since creation - remove it explicitly
   local own_net="${STACK_NAME}-cluster_galera"
   if docker network ls --format '{{.Name}}' | grep -qx "$own_net"; then
-    docker network rm "$own_net" >/dev/null 2>&1 && log_info "Removed leftover network $own_net"
+    docker network rm "$own_net" >/dev/null 2>&1 && log_info "Verwaistes Netzwerk $own_net entfernt."
   fi
 
   rm -rf ./cluster_data
@@ -178,7 +178,7 @@ cmd_reinit() {
     portolan sync &>/dev/null || true
     portolan reserve "${HAPROXY_PORT:-3306}" mariadb "mariadb-backup-system haproxy" &>/dev/null || true
     portolan reserve "${HAPROXY_STATS_PORT:-8404}" haproxy-stats "mariadb-backup-system stats" &>/dev/null || true
-    log_info "Portolan registry updated (network sync + port reservations)"
+    log_info "Portolan-Registry wurde aktualisiert (Netzwerk-Sync + Port-Reservierungen)."
   fi
 }
 
@@ -186,15 +186,15 @@ cmd_reinit() {
 # and that HAProxy fails over. Run quarterly, outside peak hours.
 cmd_drill() {
   if [[ $(cluster_healthy_count) -ne 3 ]]; then
-    log_error "Drill requires a fully healthy cluster (3/3 synced) - aborting"
+    log_error "Für einen Drill muss der Cluster komplett gesund sein (3/3 synchronisiert) - breche ab."
     print_cluster_status
     exit 1
   fi
 
-  log_warning "Failover drill: node1 will be stopped for ~30 seconds"
-  read -p "Continue? (type 'yes' to confirm): " confirm
+  log_warning "Failover Drill: Node1 wird für etwa 30 Sekunden gestoppt!"
+  read -p "Wirklich fortfahren? (Tippe 'yes' zum Bestätigen): " confirm
   if [[ "$confirm" != "yes" ]]; then
-    log_info "Drill cancelled"
+    log_info "Drill abgebrochen."
     exit 0
   fi
 
@@ -202,9 +202,9 @@ cmd_drill() {
   # and "repairs" the intentional outage before we can measure failover
   touch ./logs/.heal_paused
   trap 'rm -f ./logs/.heal_paused' EXIT
-  log_info "Self-healing paused for the duration of the drill"
+  log_info "Self-Healing ist für die Dauer des Drills pausiert."
 
-  log_info "Stopping $(node_container node1)..."
+  log_info "Stoppe $(node_container node1)..."
   docker stop "$(node_container node1)" >/dev/null
 
   # HAProxy needs fall(3) x inter(3s) ~ 9-12s to mark node1 down
@@ -213,7 +213,7 @@ cmd_drill() {
   # The cluster must stay primary and reachable through HAProxy
   local drill_ok=true
   if [[ $(cluster_healthy_count) -ne 2 ]]; then
-    log_error "Expected 2/3 healthy nodes during drill, got $(cluster_healthy_count)"
+    log_error "Erwartete 2/3 gesunde Nodes während des Drills, bekam aber $(cluster_healthy_count)."
     drill_ok=false
   fi
 
@@ -231,23 +231,23 @@ cmd_drill() {
   done
 
   if [[ "$probe_ok" == "true" ]]; then
-    log_success "HAProxy failover works: queries are served without node1"
+    log_success "HAProxy Failover funktioniert: Anfragen werden auch ohne Node1 verarbeitet."
   else
-    log_error "Query through HAProxy FAILED during node1 outage"
+    log_error "Datenbank-Anfrage über HAProxy ist während des Ausfalls von Node1 FEHLGESCHLAGEN."
     drill_ok=false
   fi
 
-  log_info "Bringing node1 back..."
+  log_info "Bringe Node1 wieder online..."
   docker start "$(node_container node1)" >/dev/null
   wait_node_synced node1 || drill_ok=false
 
   rm -f ./logs/.heal_paused
-  log_info "Self-healing resumed"
+  log_info "Self-Healing fortgesetzt."
 
   if [[ "$drill_ok" == "true" ]]; then
-    log_success "=== DRILL PASSED: failover and recovery work as designed ==="
+    log_success "=== DRILL BESTANDEN: Failover und Wiederherstellung funktionieren wie erwartet! ==="
   else
-    log_error "=== DRILL FAILED - investigate before relying on failover ==="
+    log_error "=== DRILL FEHLGESCHLAGEN - Überprüfe das System, bevor du dich auf das Failover verlässt! ==="
     exit 1
   fi
 }
@@ -258,17 +258,17 @@ cmd_status() {
   local healthy
   healthy=$(cluster_healthy_count)
   if [[ "$healthy" -eq 3 ]]; then
-    log_success "Cluster is fully healthy (3/3 nodes synced)"
+    log_success "Cluster ist vollständig gesund (3/3 Nodes synchronisiert)."
   elif [[ "$healthy" -gt 0 ]]; then
-    log_warning "Cluster is degraded ($healthy/3 nodes synced) - consider running ./scripts/heal.sh"
+    log_warning "Cluster ist eingeschränkt ($healthy/3 Nodes synchronisiert) - evtl. ./scripts/heal.sh ausführen."
   else
-    log_error "Cluster is down (0/3 nodes synced) - run ./scripts/heal.sh to recover"
+    log_error "Cluster ist down (0/3 Nodes synchronisiert) - führe ./scripts/heal.sh aus, um ihn wiederherzustellen."
   fi
 
   if container_running "$(node_container haproxy)"; then
-    log_info "HAProxy: running (stats: http://localhost:${HAPROXY_STATS_PORT:-8404})"
+    log_info "HAProxy: läuft (Stats: http://localhost:${HAPROXY_STATS_PORT:-8404})"
   else
-    log_warning "HAProxy: not running"
+    log_warning "HAProxy: läuft nicht!"
   fi
 }
 

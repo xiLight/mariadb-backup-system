@@ -27,11 +27,11 @@ handle_error() {
   exit 1
 }
 
-log_info "Starting MariaDB initialization process"
+log_info "Starte MariaDB-Initialisierung..."
 
 # Check if required environment variables are set
 if [ -z "$MARIADB_ROOT_PASSWORD" ]; then
-  handle_error "MARIADB_ROOT_PASSWORD environment variable is not set"
+  handle_error "MARIADB_ROOT_PASSWORD Umgebungsvariable ist nicht gesetzt!"
 fi
 
 # --- Galera cluster support ----------------------------------------------
@@ -39,7 +39,7 @@ GALERA_ENABLED="${GALERA_ENABLED:-no}"
 WSREP_NEW_CLUSTER=""
 
 if [ "$GALERA_ENABLED" = "yes" ]; then
-  log_info "Galera mode enabled (node: ${GALERA_NODE_NAME:-unknown})"
+  log_info "Galera-Modus ist aktiv (Node: ${GALERA_NODE_NAME:-unknown})"
 
   # Render the per-node Galera config from the template
   if [ -f "/etc/mysql/galera.cnf.template" ]; then
@@ -47,10 +47,10 @@ if [ "$GALERA_ENABLED" = "yes" ]; then
     GALERA_GCACHE_SIZE="${GALERA_GCACHE_SIZE:-512M}"
     export GALERA_CLUSTER_NAME GALERA_CLUSTER_ADDRESS GALERA_NODE_NAME GALERA_NODE_ADDRESS GALERA_NODE_ID GALERA_SST_METHOD GALERA_GCACHE_SIZE MARIADB_ROOT_PASSWORD
     envsubst < /etc/mysql/galera.cnf.template > /etc/mysql/conf.d/zz-galera.cnf ||
-      handle_error "Failed to render Galera configuration"
-    log_info "Galera configuration rendered to /etc/mysql/conf.d/zz-galera.cnf"
+      handle_error "Fehler beim Erstellen der Galera-Konfiguration."
+    log_info "Galera-Konfiguration wurde unter /etc/mysql/conf.d/zz-galera.cnf gespeichert."
   else
-    handle_error "Galera template not found: /etc/mysql/galera.cnf.template"
+    handle_error "Galera-Template nicht gefunden: /etc/mysql/galera.cnf.template"
   fi
 
   # A 'force_bootstrap' marker file in the datadir tells this node to start
@@ -59,7 +59,7 @@ if [ "$GALERA_ENABLED" = "yes" ]; then
   if [ -f "/var/lib/mysql/force_bootstrap" ]; then
     rm -f "/var/lib/mysql/force_bootstrap"
     WSREP_NEW_CLUSTER="--wsrep-new-cluster"
-    log_warning "Bootstrap marker found - this node will BOOTSTRAP a new cluster"
+    log_warning "Bootstrap-Marker gefunden - diese Node startet einen NEUEN Cluster!"
 
     if [ -f "/var/lib/mysql/grastate.dat" ]; then
       sed -i 's/^safe_to_bootstrap: 0/safe_to_bootstrap: 1/' "/var/lib/mysql/grastate.dat"
@@ -72,7 +72,7 @@ fi
 # terminate at mariadbd itself - a TLS-terminating proxy cannot work.
 # Certs are mounted root-owned; copy them readable for the mysql user.
 if [ -f "/etc/mysql/tls/server-cert.pem" ] && [ -f "/etc/mysql/tls/server-key.pem" ]; then
-  log_info "TLS certificates found - enabling server-side TLS"
+  log_info "TLS-Zertifikate gefunden - serverseitiges TLS wird aktiviert."
   mkdir -p /etc/mysql/tls-runtime
   cp /etc/mysql/tls/server-cert.pem /etc/mysql/tls/server-key.pem /etc/mysql/tls-runtime/
   [ -f /etc/mysql/tls/ca.pem ] && cp /etc/mysql/tls/ca.pem /etc/mysql/tls-runtime/
@@ -93,7 +93,7 @@ fi
 # Overrides the moderate defaults in my_custom.cnf without touching tracked
 # files. Loaded last (zz-tuning), so these values win.
 if [ -n "$DB_BUFFER_POOL_SIZE" ] || [ -n "$DB_LOG_FILE_SIZE" ] || [ -n "$DB_IO_CAPACITY" ] || [ -n "$DB_MAX_CONNECTIONS" ] || [ -n "$DB_TMP_TABLE_SIZE" ]; then
-  log_info "Rendering performance tuning overrides from environment"
+  log_info "Wende Performance-Tuning-Overrides aus der Umgebung an..."
   {
     echo "[mysqld]"
     if [ -n "$DB_BUFFER_POOL_SIZE" ]; then
@@ -116,27 +116,27 @@ if [ -n "$DB_BUFFER_POOL_SIZE" ] || [ -n "$DB_LOG_FILE_SIZE" ] || [ -n "$DB_IO_C
 fi
 
 # Create necessary directories
-log_info "Creating directories"
-mkdir -p "$DATADIR" || handle_error "Failed to create data directory"
-mkdir -p "$BINLOG_DIR" || handle_error "Failed to create binlog directory" 
-mkdir -p "$TMP_DIR" || handle_error "Failed to create temp binlog directory"
-mkdir -p "/run/mysqld" || handle_error "Failed to create mysqld socket directory"
+log_info "Erstelle Verzeichnisse..."
+mkdir -p "$DATADIR" || handle_error "Fehler beim Erstellen des Datenverzeichnisses."
+mkdir -p "$BINLOG_DIR" || handle_error "Fehler beim Erstellen des Binlog-Verzeichnisses." 
+mkdir -p "$TMP_DIR" || handle_error "Fehler beim Erstellen des temporären Binlog-Verzeichnisses."
+mkdir -p "/run/mysqld" || handle_error "Fehler beim Erstellen des mysqld Socket-Verzeichnisses."
 
 # Set proper permissions
-chown -R mysql:mysql "$DATADIR" "$BINLOG_DIR" "$TMP_DIR" "/run/mysqld" || handle_error "Failed to set directory permissions"
+chown -R mysql:mysql "$DATADIR" "$BINLOG_DIR" "$TMP_DIR" "/run/mysqld" || handle_error "Fehler beim Setzen der Verzeichnis-Berechtigungen."
 chmod 700 "$DATADIR" "$BINLOG_DIR"
 chmod 755 "/run/mysqld"
 
 # Initialize database if it doesn't exist
 if [ ! -d "$DATADIR/mysql" ]; then
-  log_info "Initializing MariaDB database in data directory: $DATADIR"
+  log_info "Initialisiere MariaDB-Datenbank im Datenverzeichnis: $DATADIR"
 
   # Initialize database with proper settings
-  log_info "Running mariadb-install-db..."
+  log_info "Führe mariadb-install-db aus..."
   mariadb-install-db --user=mysql --datadir="$DATADIR" --basedir=/usr --skip-test-db --verbose || {
-    log_info "mariadb-install-db failed, trying alternative method..."
+    log_info "mariadb-install-db fehlgeschlagen, versuche alternative Methode..."
     # Try alternative initialization method
-    mariadbd --initialize-insecure --user=mysql --datadir="$DATADIR" --basedir=/usr || handle_error "Failed to initialize database with both methods"
+    mariadbd --initialize-insecure --user=mysql --datadir="$DATADIR" --basedir=/usr || handle_error "Fehler beim Initialisieren der Datenbank mit beiden Methoden!"
   }
 
   # Joiner nodes get all data via state transfer (SST) from the cluster,
@@ -144,27 +144,27 @@ if [ ! -d "$DATADIR/mysql" ]; then
   # SKIP_PROVISION=yes skips it too (used by restore_test.sh for throwaway
   # instances that only need a bare server with socket root access).
   if [ "$SKIP_PROVISION" = "yes" ]; then
-    log_info "SKIP_PROVISION=yes: skipping SQL initialization (bare instance)"
+    log_info "SKIP_PROVISION=yes: SQL-Initialisierung übersprungen (Bare-Instanz)."
   elif [ "$GALERA_ENABLED" = "yes" ] && [ -z "$WSREP_NEW_CLUSTER" ]; then
-    log_info "Galera joiner node: skipping SQL initialization (data comes via SST)"
+    log_info "Galera Joiner Node: SQL-Initialisierung übersprungen (Daten kommen via SST)."
   else
 
-  log_info "Starting MariaDB temporarily for initialization via Unix socket..."
+  log_info "Starte MariaDB temporär über Unix-Socket für die Initialisierung..."
   mariadbd --user=mysql --datadir="$DATADIR" --socket=/run/mysqld/mysqld.sock --skip-networking --wsrep-on=OFF --pid-file=/run/mysqld/mysqld.pid &
   pid=$!
 
   # Wait for MariaDB to become available
-  log_info "Waiting for MariaDB socket..."
+  log_info "Warte auf den MariaDB Socket..."
   for i in {1..60}; do
     if [ -S /run/mysqld/mysqld.sock ]; then
-      log_info "Socket found at /run/mysqld/mysqld.sock"
+      log_info "Socket gefunden: /run/mysqld/mysqld.sock"
       break
     fi
     sleep 1
     if [ "$i" = 60 ]; then
-      log_info "Socket not found, checking alternative locations..."
+      log_info "Socket nicht gefunden, suche an alternativen Speicherorten..."
       find /var /run /tmp -name "*.sock" 2>/dev/null | head -10
-      handle_error "Timed out waiting for MariaDB socket"
+      handle_error "Timeout: MariaDB Socket wurde nicht rechtzeitig erstellt!"
     fi
   done
 
@@ -175,13 +175,13 @@ if [ ! -d "$DATADIR/mysql" ]; then
     fi
     sleep 1
     if [ "$i" = 60 ]; then
-      handle_error "Timed out waiting for MariaDB to respond"
+      handle_error "Timeout: MariaDB antwortet nicht."
     fi
   done
-  log_success "MariaDB started successfully"
+  log_success "MariaDB erfolgreich gestartet!"
 
   # Create databases and users for external access
-  log_info "Creating databases and users for external access..."
+  log_info "Erstelle Datenbanken und Benutzer für den externen Zugriff..."
 
   # Remote root is convenient but a large attack surface -
   # disable with MARIADB_ROOT_REMOTE=no (admin then via 'docker exec' only)
@@ -191,7 +191,7 @@ if [ ! -d "$DATADIR/mysql" ]; then
 GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
 GRANT RELOAD, REPLICATION CLIENT, BINLOG MONITOR, BINLOG REPLAY ON *.* TO 'root'@'%';"
   else
-    log_info "MARIADB_ROOT_REMOTE=no - root will only be accessible from inside the container"
+    log_info "MARIADB_ROOT_REMOTE=no - Der root-Benutzer ist nur noch innerhalb des Containers erreichbar."
   fi
 
   mariadb --protocol=socket --socket=/run/mysqld/mysqld.sock -u root <<EOF
@@ -246,42 +246,42 @@ FLUSH PRIVILEGES;
 EOF
 
   if [ $? -eq 0 ]; then
-    log_success "Databases and users created successfully"
+    log_success "Datenbanken und Benutzer erfolgreich angelegt!"
   else
-    handle_error "Failed to create databases and users"
+    handle_error "Fehler beim Erstellen der Datenbanken und Benutzer!"
   fi
 
   # Verify databases were created (password via env, not process list)
-  log_info "Verifying created databases:"
+  log_info "Überprüfe erstellte Datenbanken:"
   MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb --protocol=socket --socket=/run/mysqld/mysqld.sock -u root -e "SHOW DATABASES;" | grep -E "^($MARIADB_DATABASE1|$MARIADB_DATABASE2|$MARIADB_DATABASE3|$MARIADB_DATABASE4|$MARIADB_DATABASE5)$"
 
-  log_info "Verifying created users:"
+  log_info "Überprüfe erstellte Benutzer:"
   MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb --protocol=socket --socket=/run/mysqld/mysqld.sock -u root -e "SELECT User, Host FROM mysql.user WHERE User NOT IN ('', 'mysql.sys', 'mysql.session', 'mysql.infoschema') ORDER BY User, Host;"
 
   # Stop the temporary MariaDB instance
-  log_info "Stopping temporary MariaDB instance..."
+  log_info "Stoppe die temporäre MariaDB-Instanz..."
   kill "$pid"
   wait "$pid" 2>/dev/null || true
 
   fi
 
 else
-  log_info "MariaDB data directory already exists, skipping initialization"
+  log_info "MariaDB-Datenverzeichnis existiert bereits, Initialisierung wird übersprungen."
 fi
 
-log_info "Starting MariaDB server with networking enabled..."
+log_info "Starte MariaDB-Server (Netzwerk aktiviert)..."
 
 # Verify configuration file exists
 if [ -f "/etc/mysql/conf.d/my_custom.cnf" ]; then
-  log_info "Configuration file found: /etc/mysql/conf.d/my_custom.cnf"
-  log_info "Configuration file contents preview:"
+  log_info "Konfigurationsdatei gefunden: /etc/mysql/conf.d/my_custom.cnf"
+  log_info "Vorschau der Konfigurationsdatei:"
   head -10 "/etc/mysql/conf.d/my_custom.cnf" | while read line; do
     log_info "  $line"
   done
 else
-  log_warning "Configuration file not found at /etc/mysql/conf.d/my_custom.cnf"
-  log_info "Available files in /etc/mysql/conf.d/:"
-  ls -la /etc/mysql/conf.d/ || log_info "Directory does not exist"
+  log_warning "Konfigurationsdatei wurde nicht gefunden unter /etc/mysql/conf.d/my_custom.cnf"
+  log_info "Vorhandene Dateien in /etc/mysql/conf.d/:"
+  ls -la /etc/mysql/conf.d/ || log_info "Verzeichnis existiert nicht"
 fi
 
 # Ensure binary log directory exists with proper permissions
@@ -291,6 +291,6 @@ chmod -R 750 /var/lib/mysql/binlogs
 
 # Start MariaDB with explicit bind-address to override any defaults
 if [ -n "$WSREP_NEW_CLUSTER" ]; then
-  log_warning "Starting MariaDB as new Galera cluster bootstrap node"
+  log_warning "Starte MariaDB als Bootstrap-Node für einen neuen Galera-Cluster!"
 fi
 exec mariadbd --user=mysql --datadir="$DATADIR" --bind-address=0.0.0.0 $WSREP_NEW_CLUSTER

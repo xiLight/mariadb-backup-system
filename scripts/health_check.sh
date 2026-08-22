@@ -17,40 +17,40 @@ db_exec() {
 
 print_header() {
     echo -e "${BLUE}╔═══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BLUE}║               MariaDB Backup System Health Check              ║${NC}"
+    echo -e "${BLUE}║               MariaDB Backup System System-Check              ║${NC}"
     echo -e "${BLUE}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo
 }
 
 check_docker() {
-    log_info "Checking Docker status..."
+    log_info "Überprüfe Docker-Status..."
 
     if ! command -v docker &> /dev/null; then
-        log_error "Docker is not installed"
+        log_error "Docker ist nicht installiert."
         return 1
     fi
 
     if ! docker info &> /dev/null; then
-        log_error "Docker daemon is not running"
+        log_error "Der Docker-Dienst läuft nicht."
         return 1
     fi
 
-    log_success "Docker is running"
+    log_success "Docker läuft."
     return 0
 }
 
 check_mariadb_connection() {
-    log_info "Checking MariaDB connection..."
+    log_info "Überprüfe Verbindung zu MariaDB..."
 
     if [ ! -f ".env" ]; then
-        log_error ".env file not found"
+        log_error ".env Datei nicht gefunden."
         return 1
     fi
 
     if db_exec -e "SELECT 1;" &>/dev/null; then
-        log_success "MariaDB connection successful"
+        log_success "Verbindung zu MariaDB erfolgreich hergestellt."
     else
-        log_error "Cannot connect to MariaDB container '$MARIADB_CONTAINER'"
+        log_error "Verbindung zum MariaDB-Container '$MARIADB_CONTAINER' fehlgeschlagen."
         return 1
     fi
 
@@ -58,34 +58,34 @@ check_mariadb_connection() {
 }
 
 check_databases() {
-    log_info "Checking database status..."
+    log_info "Überprüfe Datenbank-Status..."
 
     DB_LIST=$(db_exec -N -e "SHOW DATABASES;" 2>/dev/null | grep -v -E "^(information_schema|performance_schema|mysql|sys)$")
 
     if [ -z "$DB_LIST" ]; then
-        log_warning "No user databases found"
+        log_warning "Keine Benutzer-Datenbanken gefunden."
     else
-        log_success "Found databases: $(echo $DB_LIST | tr '\n' ' ')"
+        log_success "Gefundene Datenbanken: $(echo $DB_LIST | tr '\n' ' ')"
     fi
 
     return 0
 }
 
 check_binary_logging() {
-    log_info "Checking binary logging configuration..."
+    log_info "Überprüfe Binlog-Konfiguration..."
 
     BINLOG_ENABLED=$(db_exec -N -e "SELECT @@log_bin;" 2>/dev/null)
 
     if [ "$BINLOG_ENABLED" = "1" ]; then
-        log_success "Binary logging is enabled"
+        log_success "Binary Logging ist aktiviert."
 
         BINLOG_BASE=$(db_exec -N -e "SELECT @@log_bin_basename;" 2>/dev/null)
-        log_info "Binary log base: $BINLOG_BASE"
+        log_info "Binary Log Base: $BINLOG_BASE"
 
         BINLOG_COUNT=$(db_exec -N -e "SHOW BINARY LOGS;" 2>/dev/null | wc -l)
-        log_info "Binary log files on server: $BINLOG_COUNT"
+        log_info "Anzahl der Binary-Log-Dateien auf dem Server: $BINLOG_COUNT"
     else
-        log_error "Binary logging is disabled - incremental backups will not work"
+        log_error "Binary Logging ist deaktiviert - inkrementelle Backups werden nicht funktionieren."
         return 1
     fi
 
@@ -93,31 +93,31 @@ check_binary_logging() {
 }
 
 check_bind_address() {
-    log_info "Checking bind address configuration..."
+    log_info "Überprüfe Bind-Address Konfiguration..."
 
     BIND_ADDRESS=$(db_exec -N -e "SELECT @@bind_address;" 2>/dev/null)
 
     if [ "$BIND_ADDRESS" = "0.0.0.0" ]; then
-        log_success "Bind address is correctly set to 0.0.0.0"
+        log_success "Bind Address ist korrekt auf 0.0.0.0 gesetzt."
     else
-        log_warning "Bind address is set to: $BIND_ADDRESS (expected: 0.0.0.0)"
+        log_warning "Bind Address ist: $BIND_ADDRESS (erwartet: 0.0.0.0)"
     fi
 
     return 0
 }
 
 check_backup_directories() {
-    log_info "Checking backup directories..."
+    log_info "Überprüfe Backup-Verzeichnisse..."
 
     directories=("backups" "backups/binlogs" "backups/checksums" "backups/incr" "backups/binlog_info" "logs")
 
     for dir in "${directories[@]}"; do
         if [ -d "$dir" ]; then
-            log_success "Directory exists: $dir"
+            log_success "Verzeichnis existiert: $dir"
         else
-            log_warning "Directory missing: $dir"
+            log_warning "Verzeichnis fehlt: $dir"
             mkdir -p "$dir"
-            log_info "Created directory: $dir"
+            log_info "Verzeichnis erstellt: $dir"
         fi
     done
 
@@ -125,21 +125,21 @@ check_backup_directories() {
 }
 
 check_scripts() {
-    log_info "Checking script permissions..."
+    log_info "Überprüfe Berechtigungen der Skripte..."
 
     scripts=("backup.sh" "restore.sh" "encrypt_backup.sh" "verify_backup.sh" "cleanup_backups.sh" "cleanup_binlogs.sh" "log_cleanup.sh" "db_admin.sh")
 
     for script in "${scripts[@]}"; do
         if [ -f "$script" ]; then
             if [ -x "$script" ]; then
-                log_success "Script is executable: $script"
+                log_success "Skript ist ausführbar: $script"
             else
-                log_warning "Script is not executable: $script"
+                log_warning "Skript ist nicht ausführbar: $script"
                 chmod +x "$script"
-                log_info "Made executable: $script"
+                log_info "Ausführbar gemacht: $script"
             fi
         else
-            log_error "Script missing: $script"
+            log_error "Skript fehlt: $script"
         fi
     done
 
@@ -147,7 +147,7 @@ check_scripts() {
 }
 
 check_env_permissions() {
-    log_info "Checking .env permissions..."
+    log_info "Überprüfe Berechtigungen der .env-Datei..."
 
     if [ ! -f ".env" ]; then
         return 0
@@ -155,38 +155,38 @@ check_env_permissions() {
 
     ENV_PERMS=$(stat -c "%a" .env 2>/dev/null || stat -f "%A" .env 2>/dev/null)
     if [ "$ENV_PERMS" = "600" ]; then
-        log_success ".env has correct permissions (600)"
+        log_success ".env hat korrekte Berechtigungen (600)."
     else
-        log_warning ".env permissions: $ENV_PERMS (contains all passwords - fixing to 600)"
+        log_warning "Berechtigungen der .env: $ENV_PERMS (enthält alle Passwörter - setze auf 600)."
         chmod 600 .env
-        log_info "Fixed .env permissions"
+        log_info "Berechtigungen der .env-Datei korrigiert."
     fi
 
     return 0
 }
 
 check_encryption_key() {
-    log_info "Checking encryption key..."
+    log_info "Überprüfe Verschlüsselungs-Key..."
 
     if [ -f ".backup_encryption_key" ]; then
         KEY_SIZE=$(wc -c < .backup_encryption_key)
         if [ "$KEY_SIZE" -gt 20 ]; then
-            log_success "Encryption key exists and has good size ($KEY_SIZE bytes)"
+            log_success "Verschlüsselungs-Key existiert und hat eine gute Größe ($KEY_SIZE Bytes)."
         else
-            log_warning "Encryption key seems too small ($KEY_SIZE bytes)"
+            log_warning "Verschlüsselungs-Key scheint zu klein zu sein ($KEY_SIZE Bytes)."
         fi
 
         KEY_PERMS=$(stat -c "%a" .backup_encryption_key 2>/dev/null || stat -f "%A" .backup_encryption_key 2>/dev/null)
         if [ "$KEY_PERMS" = "600" ]; then
-            log_success "Encryption key has correct permissions (600)"
+            log_success "Verschlüsselungs-Key hat korrekte Berechtigungen (600)."
         else
-            log_warning "Encryption key permissions: $KEY_PERMS (should be 600)"
+            log_warning "Berechtigungen des Verschlüsselungs-Keys: $KEY_PERMS (sollte 600 sein)."
             chmod 600 .backup_encryption_key
-            log_info "Fixed encryption key permissions"
+            log_info "Berechtigungen des Verschlüsselungs-Keys korrigiert."
         fi
     else
-        log_error "Encryption key missing: .backup_encryption_key"
-        log_info "Generate with: openssl rand -base64 32 > .backup_encryption_key && chmod 600 .backup_encryption_key"
+        log_error "Verschlüsselungs-Key fehlt: .backup_encryption_key"
+        log_info "Generiere ihn mit: openssl rand -base64 32 > .backup_encryption_key && chmod 600 .backup_encryption_key"
         return 1
     fi
 
@@ -194,31 +194,31 @@ check_encryption_key() {
 }
 
 check_recent_backups() {
-    log_info "Checking for recent backups..."
+    log_info "Prüfe auf kürzlich erstellte Backups..."
 
     RECENT_BACKUPS=$(find backups -name "*.sql.gz.enc" -mtime -7 2>/dev/null | wc -l)
 
     if [ "$RECENT_BACKUPS" -gt 0 ]; then
-        log_success "Found $RECENT_BACKUPS recent backup(s) from last 7 days"
+        log_success "$RECENT_BACKUPS aktuelle(s) Backup(s) aus den letzten 7 Tagen gefunden."
     else
-        log_warning "No recent backups found from last 7 days"
-        log_info "Run: ./scripts/backup.sh --full"
+        log_warning "Keine Backups aus den letzten 7 Tagen gefunden!"
+        log_info "Tipp: Führe ./scripts/backup.sh --full aus."
     fi
 
     return 0
 }
 
 check_offsite_sync() {
-    log_info "Checking offsite replication..."
+    log_info "Überprüfe Offsite-Replikation..."
 
     if [ -z "$OFFSITE_TARGET" ]; then
-        log_warning "Offsite replication not configured (OFFSITE_TARGET empty)"
-        log_info "A disk failure would lose the database AND all backups - see offsite_sync.sh"
+        log_warning "Offsite-Replikation ist nicht konfiguriert (OFFSITE_TARGET ist leer)."
+        log_info "Bei einem Festplattenausfall gehen Datenbank UND alle Backups verloren - siehe offsite_sync.sh!"
         return 0
     fi
 
     if [ ! -f "./logs/.last_offsite_sync" ]; then
-        log_warning "Offsite target configured but no sync has run yet - run: ./scripts/offsite_sync.sh"
+        log_warning "Offsite-Ziel konfiguriert, aber es lief noch kein Sync - führe ./scripts/offsite_sync.sh aus."
         return 1
     fi
 
@@ -227,47 +227,47 @@ check_offsite_sync() {
     age_days=$(( ($(date +%s) - last_sync) / 86400 ))
 
     if [ "$age_days" -ge 7 ]; then
-        log_warning "Last offsite sync is $age_days days old - check offsite_sync.sh / its cron job"
+        log_warning "Der letzte Offsite-Sync ist $age_days Tage alt - prüfe offsite_sync.sh bzw. den Cronjob."
         return 1
     fi
 
-    log_success "Offsite replication is current (last sync: $age_days day(s) ago)"
+    log_success "Offsite-Replikation ist aktuell (letzter Sync: vor $age_days Tag(en))."
     return 0
 }
 
 check_disk_space() {
-    log_info "Checking disk space..."
+    log_info "Überprüfe freien Speicherplatz..."
 
     AVAIL_KB=$(df -Pk . 2>/dev/null | awk 'NR==2 {print $4}')
     if [ -z "$AVAIL_KB" ]; then
-        log_warning "Could not determine free disk space"
+        log_warning "Konnte freien Speicherplatz nicht ermitteln."
         return 0
     fi
 
     AVAIL_MB=$((AVAIL_KB / 1024))
     BACKUP_USAGE=$(du -sh backups 2>/dev/null | cut -f1 || echo "0")
 
-    log_info "Backup directory usage: $BACKUP_USAGE"
+    log_info "Speicherbelegung im Backup-Verzeichnis: $BACKUP_USAGE"
     if [ "$AVAIL_MB" -lt 1024 ]; then
-        log_warning "Low disk space: only ${AVAIL_MB} MB free"
+        log_warning "Wenig Speicherplatz: Nur noch ${AVAIL_MB} MB frei!"
         return 1
     fi
 
-    log_success "Free disk space: ${AVAIL_MB} MB"
+    log_success "Freier Speicherplatz: ${AVAIL_MB} MB"
     return 0
 }
 
 run_backup_test() {
     if [ "$1" = "--test-backup" ]; then
-        log_info "Running backup test..."
+        log_info "Führe Backup-Test aus..."
         if ./scripts/backup.sh --full --include-empty >/dev/null 2>&1; then
-            log_success "Backup test completed successfully"
+            log_success "Backup-Test erfolgreich abgeschlossen."
         else
-            log_error "Backup test failed - check logs/backup.log for details"
+            log_error "Backup-Test fehlgeschlagen - Details in logs/backup.log."
             return 1
         fi
     else
-        log_info "Skipping backup test (use --test-backup to run)"
+        log_info "Überspringe Backup-Test (nutze --test-backup zum Ausführen)."
     fi
 
     return 0
@@ -276,22 +276,22 @@ run_backup_test() {
 show_summary() {
     echo
     echo -e "${BLUE}╔═══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BLUE}║                        Health Check Summary                   ║${NC}"
+    echo -e "${BLUE}║                   Zusammenfassung des System-Checks           ║${NC}"
     echo -e "${BLUE}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo
 
     if [ $OVERALL_STATUS -eq 0 ]; then
-        log_success "All checks passed! System is healthy."
+        log_success "Alle Tests bestanden! Das System ist gesund."
     else
-        log_warning "Some issues were found. Please review the output above."
+        log_warning "Es wurden Probleme gefunden. Bitte überprüfe die Ausgaben oben."
     fi
 
     echo
-    echo -e "${BLUE}Useful Commands:${NC}"
-    echo "  docker logs $MARIADB_CONTAINER    # View MariaDB logs"
-    echo "  ./scripts/backup.sh --full                # Create full backup"
-    echo "  ./scripts/verify_backup.sh --latest       # Verify latest backups"
-    echo "  ./scripts/health_check.sh --test-backup   # Run with backup test"
+    echo -e "${BLUE}Nützliche Befehle:${NC}"
+    echo "  docker logs $MARIADB_CONTAINER    # MariaDB Logs ansehen"
+    echo "  ./scripts/backup.sh --full                # Vollständiges Backup erstellen"
+    echo "  ./scripts/verify_backup.sh --latest       # Neueste Backups verifizieren"
+    echo "  ./scripts/health_check.sh --test-backup   # Inkl. Backup-Test ausführen"
     echo
 }
 

@@ -39,13 +39,13 @@ case "$1" in
     RECOVER_ONLY=true
     ;;
   --help)
-    echo "Usage: $0 [--daemon|--recover]"
+    echo "Nutzung: $0 [--daemon|--recover]"
     echo ""
-    echo "  (no option)  Run one healing check (suitable for cron)"
-    echo "  --daemon     Run continuously, checking every ${HEAL_INTERVAL}s (HEAL_INTERVAL)"
-    echo "  --recover    Force full-cluster recovery (bootstrap from newest node)"
+    echo "  (keine Option)  Führt einen einzelnen Healing-Check aus (ideal für Cronjobs)"
+    echo "  --daemon        Läuft durchgehend und prüft alle ${HEAL_INTERVAL}s (HEAL_INTERVAL)"
+    echo "  --recover       Erzwingt eine komplette Wiederherstellung (Bootstrap vom aktuellsten Node)"
     echo ""
-    echo "Cron example (check every minute):"
+    echo "Cronjob Beispiel (prüft jede Minute):"
     echo "  * * * * * cd $(pwd) && ./scripts/heal.sh >/dev/null 2>&1"
     exit 0
     ;;
@@ -99,28 +99,28 @@ pick_bootstrap_node() {
 }
 
 full_cluster_recovery() {
-  log_warning "=== FULL CLUSTER RECOVERY ==="
+  log_warning "=== KOMPLETTE CLUSTER WIEDERHERSTELLUNG ==="
 
   compose_cluster stop node1 node2 node3 2>/dev/null
 
   local bootstrap_node
   bootstrap_node=$(pick_bootstrap_node)
-  log_info "Bootstrapping from $(node_container "$bootstrap_node") (newest data)"
+  log_info "Starte Bootstrap von $(node_container "$bootstrap_node") (aktuellste Daten)"
 
   touch "$(node_datadir "$bootstrap_node")/force_bootstrap"
   compose_cluster up -d "$bootstrap_node" || {
-    log_error "Failed to create/start $(node_container "$bootstrap_node") - see the docker error above"
+    log_error "Konnte $(node_container "$bootstrap_node") nicht erstellen/starten - siehe Docker-Fehlermeldung oben."
     return 1
   }
 
   if ! wait_node_synced "$bootstrap_node"; then
-    log_error "Bootstrap node $(node_container "$bootstrap_node") failed to start - manual intervention required"
-    log_error "Check: docker logs $(node_container "$bootstrap_node")"
-    [[ -x ./scripts/notify.sh ]] && ./scripts/notify.sh error "Cluster recovery FAILED" "Full cluster recovery could not bootstrap $(node_container "$bootstrap_node") - manual intervention required!" || true
+    log_error "Bootstrap-Node $(node_container "$bootstrap_node") konnte nicht starten - manueller Eingriff erforderlich!"
+    log_error "Prüfe die Logs mit: docker logs $(node_container "$bootstrap_node")"
+    [[ -x ./scripts/notify.sh ]] && ./scripts/notify.sh error "Cluster-Wiederherstellung FEHLGESCHLAGEN" "Die Cluster-Wiederherstellung konnte $(node_container "$bootstrap_node") nicht bootstrappen - manueller Eingriff erforderlich!" || true
     return 1
   fi
 
-  log_info "Rejoining remaining nodes..."
+  log_info "Verbinde die restlichen Nodes wieder..."
   local node
   for node in "${CLUSTER_NODES[@]}"; do
     [[ "$node" == "$bootstrap_node" ]] && continue
@@ -129,18 +129,18 @@ full_cluster_recovery() {
 
   for node in "${CLUSTER_NODES[@]}"; do
     [[ "$node" == "$bootstrap_node" ]] && continue
-    wait_node_synced "$node" || log_warning "$node did not rejoin yet - will retry on next heal run"
+    wait_node_synced "$node" || log_warning "$node ist noch nicht wieder beigetreten - wird beim nächsten Healing-Run erneut versucht."
   done
 
   compose_cluster up -d haproxy
-  log_success "=== Cluster recovery completed ==="
-  [[ -x ./scripts/notify.sh ]] && ./scripts/notify.sh warning "Cluster recovered" "The whole cluster was down and has been recovered automatically (bootstrapped from $(node_container "$bootstrap_node"))." || true
+  log_success "=== Cluster-Wiederherstellung abgeschlossen ==="
+  [[ -x ./scripts/notify.sh ]] && ./scripts/notify.sh warning "Cluster wiederhergestellt" "Der komplette Cluster war down und wurde automatisch wiederhergestellt (Bootstrap von $(node_container "$bootstrap_node"))." || true
 }
 
 heal_once() {
   # Never initialized -> nothing to heal
   if [[ ! -d "./cluster_data" ]]; then
-    log_info "No cluster data found - nothing to heal (run ./scripts/cluster.sh init first)"
+    log_info "Keine Cluster-Daten gefunden - nichts zu tun (führe zuerst ./scripts/cluster.sh init aus)."
     return 0
   fi
 
@@ -148,10 +148,10 @@ heal_once() {
   if [[ -f "$PAUSE_FILE" ]]; then
     local pause_age=$(( $(date +%s) - $(stat -c %Y "$PAUSE_FILE" 2>/dev/null || echo 0) ))
     if (( pause_age < PAUSE_TTL )); then
-      log_info "Maintenance mode active (${pause_age}s) - skipping heal checks"
+      log_info "Wartungsmodus ist aktiv (${pause_age}s) - überspringe Healing-Checks."
       return 0
     fi
-    log_warning "Stale maintenance flag (>${PAUSE_TTL}s old) - removing it and resuming healing"
+    log_warning "Veraltetes Wartungs-Flag (>${PAUSE_TTL}s alt) - lösche es und setze Healing fort."
     rm -f "$PAUSE_FILE"
   fi
 
@@ -173,7 +173,7 @@ heal_once() {
   # containers won't self-start into a valid cluster (a bootstrap node is required),
   # so do a coordinated recovery.
   if [[ "$running" -eq 0 ]] || [[ "$running" -gt 0 && "$primary" -eq 0 && "$non_primary" -eq "$running" ]]; then
-    log_warning "Cluster is down or has lost quorum (running: $running, primary: $primary)"
+    log_warning "Cluster ist down oder hat das Quorum verloren (laufend: $running, Primary: $primary)."
     full_cluster_recovery
     return $?
   fi
@@ -184,7 +184,7 @@ heal_once() {
     container=$(node_container "$node")
 
     if ! node_running "$node"; then
-      log_warning "$container is not running - starting it"
+      log_warning "$container läuft nicht - starte ihn..."
       compose_cluster up -d "$node"
       clear_strikes "$node"
       continue
@@ -201,34 +201,34 @@ heal_once() {
     state=$(node_wsrep "$node" wsrep_local_state_comment)
 
     if [[ "$state" == "Donor/Desynced" || "$state" == "Joining"* || "$state" == "Joined" ]]; then
-      log_info "$container is in transient state '$state' - leaving it alone"
+      log_info "$container ist im Übergangszustand '$state' - warte ab."
       clear_strikes "$node"
       continue
     fi
 
     strikes=$(add_strike "$node")
-    log_warning "$container is unhealthy (state: ${state:-not responding}, strike $strikes/$STRIKE_LIMIT) - diagnose with: docker logs --tail 30 $container"
+    log_warning "$container ist ungesund (Status: ${state:-antwortet nicht}, Fehlversuch $strikes/$STRIKE_LIMIT) - Diagnose mit: docker logs --tail 30 $container"
 
     if (( strikes >= STRIKE_LIMIT )); then
-      log_warning "Restarting $container after $STRIKE_LIMIT failed checks"
+      log_warning "Starte $container neu nach $STRIKE_LIMIT fehlgeschlagenen Checks..."
       docker restart "$container" >/dev/null 2>&1 || compose_cluster up -d "$node"
       clear_strikes "$node"
-      [[ -x ./scripts/notify.sh ]] && ./scripts/notify.sh warning "Self-healing: node restarted" "$container was unhealthy (state: ${state:-not responding}) and has been restarted automatically." || true
+      [[ -x ./scripts/notify.sh ]] && ./scripts/notify.sh warning "Self-Healing: Node neugestartet" "$container war ungesund (Status: ${state:-antwortet nicht}) und wurde automatisch neugestartet." || true
     fi
   done
 
   # Heal HAProxy
   if ! container_running "$(node_container haproxy)"; then
-    log_warning "HAProxy is not running - starting it"
+    log_warning "HAProxy läuft nicht - starte ihn..."
     compose_cluster up -d haproxy
   fi
 
   local healthy
   healthy=$(cluster_healthy_count)
   if [[ "$healthy" -eq 3 ]]; then
-    log_info "Heal check OK: 3/3 nodes synced"
+    log_info "Healing-Check OK: 3/3 Nodes synchronisiert."
   else
-    log_warning "Heal check: $healthy/3 nodes synced"
+    log_warning "Healing-Check: $healthy/3 Nodes synchronisiert."
   fi
 }
 
@@ -238,7 +238,7 @@ if [[ "$RECOVER_ONLY" == "true" ]]; then
 fi
 
 if [[ "$DAEMON_MODE" == "true" ]]; then
-  log_info "Starting heal daemon (interval: ${HEAL_INTERVAL}s) - stop with Ctrl+C"
+  log_info "Starte Heal-Daemon (Intervall: ${HEAL_INTERVAL}s) - Abbruch mit Ctrl+C"
   while true; do
     heal_once
     sleep "$HEAL_INTERVAL"

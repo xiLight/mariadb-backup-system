@@ -26,7 +26,7 @@ handle_error() {
 }
 
 if ! command -v openssl &> /dev/null; then
-  handle_error 1 "OpenSSL is not installed. Please install it and try again."
+  handle_error 1 "OpenSSL ist nicht installiert. Bitte installieren und erneut versuchen."
 fi
 
 while [[ $# -gt 0 ]]; do
@@ -52,13 +52,13 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --help)
-      echo "Usage: ./scripts/encrypt_backup.sh [--encrypt|--decrypt] FILE [OPTIONS]"
-      echo "  --encrypt            Encrypt the specified file (creates FILE.enc)"
-      echo "  --decrypt            Decrypt the specified file"
-      echo "  --key FILE           Key file (default: .backup_encryption_key)"
-      echo "  --checksum-dir DIR   Checksum directory (default: ./backups/checksums)"
-      echo "  --no-checksum        Skip checksum creation on encrypt"
-      echo "  --help               Show this help message"
+      echo "Nutzung: ./scripts/encrypt_backup.sh [--encrypt|--decrypt] FILE [OPTIONS]"
+      echo "  --encrypt            Die angegebene Datei verschlüsseln (erstellt FILE.enc)"
+      echo "  --decrypt            Die angegebene Datei entschlüsseln"
+      echo "  --key FILE           Key-Datei (Standard: .backup_encryption_key)"
+      echo "  --checksum-dir DIR   Verzeichnis für Prüfsummen (Standard: ./backups/checksums)"
+      echo "  --no-checksum        Beim Verschlüsseln keine Prüfsumme erstellen"
+      echo "  --help               Diesen Hilfetext anzeigen"
       exit 0
       ;;
     *)
@@ -68,18 +68,18 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -z "$ACTION" ]] && handle_error 2 "No action specified. Use --encrypt or --decrypt"
-[[ -z "$FILE" ]] && handle_error 3 "No file specified"
-[[ ! -f "$FILE" ]] && handle_error 4 "File '$FILE' not found"
+[[ -z "$ACTION" ]] && handle_error 2 "Keine Aktion angegeben. Nutze --encrypt oder --decrypt."
+[[ -z "$FILE" ]] && handle_error 3 "Keine Datei angegeben."
+[[ ! -f "$FILE" ]] && handle_error 4 "Datei '$FILE' wurde nicht gefunden."
 
 if [[ ! -f "$KEY_FILE" && "$ACTION" == "encrypt" ]]; then
-  log_info "Generating new encryption key..."
+  log_info "Generiere neuen Verschlüsselungs-Key..."
   openssl rand -base64 32 > "$KEY_FILE"
   chmod 600 "$KEY_FILE"
-  log_warning "Encryption key generated and saved to $KEY_FILE. KEEP THIS SAFE!"
+  log_warning "Verschlüsselungs-Key generiert und in $KEY_FILE gespeichert. GUT AUFBEWAHREN!"
 fi
 
-[[ ! -f "$KEY_FILE" ]] && handle_error 5 "Key file '$KEY_FILE' not found"
+[[ ! -f "$KEY_FILE" ]] && handle_error 5 "Key-Datei '$KEY_FILE' wurde nicht gefunden."
 
 write_checksum() {
   local target="$1" checksum_file="$2"
@@ -104,19 +104,19 @@ verify_checksum() {
 
 if [[ "$ACTION" == "encrypt" ]]; then
   OUTPUT_FILE="${FILE}.enc"
-  log_info "Encrypting: $FILE -> $OUTPUT_FILE"
+  log_info "Verschlüssele: $FILE -> $OUTPUT_FILE"
 
   openssl enc -aes-256-cbc -salt -pbkdf2 -iter "$PBKDF2_ITER" -in "$FILE" -out "$OUTPUT_FILE" -pass file:"$KEY_FILE" ||
-    handle_error 6 "Encryption failed"
+    handle_error 6 "Verschlüsselung fehlgeschlagen."
 
   if [[ "$CREATE_CHECKSUM" == "true" ]]; then
     mkdir -p "$CHECKSUM_DIR"
     CHECKSUM_FILE="$CHECKSUM_DIR/$(basename "$OUTPUT_FILE").sha256"
     write_checksum "$OUTPUT_FILE" "$CHECKSUM_FILE"
-    log_info "Checksum saved: $CHECKSUM_FILE"
+    log_info "Checksumme gespeichert: $CHECKSUM_FILE"
   fi
 
-  log_success "Encryption completed successfully"
+  log_success "Verschlüsselung erfolgreich abgeschlossen."
 
 elif [[ "$ACTION" == "decrypt" ]]; then
   if [[ "$FILE" == *.enc ]]; then
@@ -125,29 +125,29 @@ elif [[ "$ACTION" == "decrypt" ]]; then
     OUTPUT_FILE="${FILE}.decrypted"
   fi
 
-  log_info "Decrypting: $FILE -> $OUTPUT_FILE"
+  log_info "Entschlüssele: $FILE -> $OUTPUT_FILE"
 
   # Verify integrity first if a checksum exists (new location, then legacy)
   CHECKSUM_FILE="$CHECKSUM_DIR/$(basename "$FILE").sha256"
   [[ ! -f "$CHECKSUM_FILE" ]] && CHECKSUM_FILE="${FILE}.sha256"
 
   if [[ -f "$CHECKSUM_FILE" ]]; then
-    log_info "Verifying checksum before decryption..."
+    log_info "Überprüfe Checksumme vor der Entschlüsselung..."
     if verify_checksum "$FILE" "$CHECKSUM_FILE"; then
-      log_success "Checksum verified successfully"
+      log_success "Checksumme erfolgreich verifiziert."
     else
-      handle_error 7 "Checksum verification failed! File may be corrupted."
+      handle_error 7 "Checksummen-Prüfung fehlgeschlagen! Die Datei könnte beschädigt sein."
     fi
   fi
 
   if ! openssl enc -aes-256-cbc -d -pbkdf2 -iter "$PBKDF2_ITER" -in "$FILE" -out "$OUTPUT_FILE" -pass file:"$KEY_FILE" 2>/dev/null; then
-    log_info "Trying legacy decryption parameters (backup from before iteration hardening)..."
+    log_info "Versuche veraltete Entschlüsselungs-Parameter (Backup vor Iterations-Härtung)..."
     rm -f "$OUTPUT_FILE"
     openssl enc -aes-256-cbc -d -pbkdf2 -in "$FILE" -out "$OUTPUT_FILE" -pass file:"$KEY_FILE" ||
-      { rm -f "$OUTPUT_FILE"; handle_error 9 "Decryption failed. Is the key correct?"; }
+      { rm -f "$OUTPUT_FILE"; handle_error 9 "Entschlüsselung fehlgeschlagen. Ist der Key korrekt?"; }
   fi
 
-  log_success "Decryption completed successfully"
+  log_success "Entschlüsselung erfolgreich abgeschlossen."
 fi
 
 exit 0

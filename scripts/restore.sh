@@ -54,20 +54,20 @@ get_databases_with_backups() {
 select_database_interactive() {
   local DBS=("$@")
   if [[ ${#DBS[@]} -eq 0 ]]; then
-    log_error "No databases with backup files found." >&2
+    log_error "Keine Datenbanken mit vorhandenen Backups gefunden." >&2
     exit 1
   fi
 
   echo "" >&2
-  echo "Available databases for restore:" >&2
-  echo "================================" >&2
-  echo "  [1] ALL_DATABASES (restore all databases)" >&2
+  echo "Verfügbare Datenbanken zur Wiederherstellung:" >&2
+  echo "==============================================" >&2
+  echo "  [1] ALL_DATABASES (alle Datenbanken wiederherstellen)" >&2
   for i in "${!DBS[@]}"; do
     echo "  [$((i + 2))] ${DBS[$i]}" >&2
   done
 
   echo "" >&2
-  read -p "Select an option (1-$((1 + ${#DBS[@]}))): " selection
+  read -p "Bitte wähle eine Option (1-$((1 + ${#DBS[@]}))): " selection
 
   if [[ "$selection" =~ ^[0-9]+$ ]] && [[ "$selection" -ge 1 ]] && [[ "$selection" -le $((1 + ${#DBS[@]})) ]]; then
     if [[ "$selection" -eq 1 ]]; then
@@ -76,7 +76,7 @@ select_database_interactive() {
       echo "${DBS[$((selection - 2))]}"
     fi
   else
-    log_error "Invalid selection: $selection" >&2
+    log_error "Ungültige Auswahl: $selection" >&2
     exit 1
   fi
 }
@@ -87,12 +87,12 @@ select_backup_interactive() {
   local FULLS=("$@")
 
   if [[ ${#FULLS[@]} -eq 0 ]]; then
-    log_error "No valid backups found for database $DB" >&2
+    log_error "Keine gültigen Backups für Datenbank '$DB' gefunden." >&2
     exit 1
   fi
 
   echo "" >&2
-  echo "Available backups for database '$DB':" >&2
+  echo "Verfügbare Backups für Datenbank '$DB':" >&2
   echo "======================================" >&2
 
   for i in "${!FULLS[@]}"; do
@@ -105,16 +105,16 @@ select_backup_interactive() {
     if [[ -n "$backup_date" ]]; then
       local age_seconds=$(( $(date +%s) - backup_date ))
       if (( age_seconds >= 86400 )); then
-        age_text="$((age_seconds / 86400)) day(s) ago"
+        age_text="vor $((age_seconds / 86400)) Tag(en)"
       elif (( age_seconds >= 3600 )); then
-        age_text="$((age_seconds / 3600)) hour(s) ago"
+        age_text="vor $((age_seconds / 3600)) Stunde(n)"
       elif (( age_seconds >= 60 )); then
-        age_text="$((age_seconds / 60)) minute(s) ago"
+        age_text="vor $((age_seconds / 60)) Minute(n)"
       else
-        age_text="${age_seconds} second(s) ago"
+        age_text="vor ${age_seconds} Sekunde(n)"
       fi
     else
-      age_text="unknown date"
+      age_text="unbekanntes Datum"
     fi
 
     local backup_timestamp
@@ -123,12 +123,12 @@ select_backup_interactive() {
   done
 
   echo "" >&2
-  read -p "Select backup number (1-${#FULLS[@]}): " selection
+  read -p "Bitte wähle eine Backup-Nummer (1-${#FULLS[@]}): " selection
 
   if [[ "$selection" =~ ^[0-9]+$ ]] && [[ "$selection" -ge 1 ]] && [[ "$selection" -le ${#FULLS[@]} ]]; then
     echo "${FULLS[$((selection - 1))]}"
   else
-    log_error "Invalid selection: $selection" >&2
+    log_error "Ungültige Auswahl: $selection" >&2
     exit 1
   fi
 }
@@ -186,54 +186,54 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --help)
-      echo "Usage: $0 [OPTIONS]"
+      echo "Nutzung: $0 [OPTIONS]"
       echo ""
-      echo "OPTIONS:"
-      echo "  --database DB          Specify database name"
-      echo "  --backup-file FILE     Specify backup file path"
-      echo "  --last                 Use the most recent backup (requires --database)"
-      echo "  --to-timestamp TS      Restore up to specific timestamp (YYYY-MM-DD HH:MM:SS)"
-      echo "  --with-grants          Also restore users and grants from the latest grants backup"
-      echo "  --grants-only          Restore ONLY users and grants, no databases"
-      echo "  --yes                  Skip the confirmation prompt"
-      echo "  --verbose              Enable verbose output"
-      echo "  --help                 Show this help message"
+      echo "OPTIONEN:"
+      echo "  --database DB          Den Namen der Datenbank angeben"
+      echo "  --backup-file FILE     Den genauen Pfad zur Backup-Datei angeben"
+      echo "  --last                 Das aktuellste Backup verwenden (erfordert --database)"
+      echo "  --to-timestamp TS      Bis zu einem bestimmten Zeitpunkt wiederherstellen (YYYY-MM-DD HH:MM:SS)"
+      echo "  --with-grants          Auch User und Berechtigungen aus dem aktuellsten Grants-Backup wiederherstellen"
+      echo "  --grants-only          NUR User und Berechtigungen wiederherstellen, keine Datenbanken"
+      echo "  --yes                  Sicherheitsabfrage überspringen"
+      echo "  --verbose              Ausführliche Ausgabe aktivieren"
+      echo "  --help                 Diesen Hilfetext anzeigen"
       echo ""
-      echo "If no options are provided, interactive mode is used."
+      echo "Wenn keine Optionen übergeben werden, startet der interaktive Modus."
       exit 0
       ;;
     *)
-      log_error "Unknown option: $1"
+      log_error "Unbekannte Option: $1"
       exit 1
       ;;
   esac
 done
 
-log_info "Starting restore process"
+log_info "Starte Wiederherstellung (Restore-Prozess)"
 
 if [[ -f ".env" ]]; then
   source .env
-  debug_log "Loaded environment variables from .env"
+  debug_log "Umgebungsvariablen aus der .env-Datei geladen."
 else
-  log_error ".env file not found"
+  log_error ".env Datei nicht gefunden."
   exit 1
 fi
 
 MARIADB_CONTAINER="${MARIADB_CONTAINER:-mariadb}"
 
 if [[ ! -f "$ENCRYPT_KEY_FILE" ]]; then
-  log_error "Encryption key not found: $ENCRYPT_KEY_FILE - cannot decrypt backups"
+  log_error "Verschlüsselungs-Key nicht gefunden: $ENCRYPT_KEY_FILE - Backups können nicht entschlüsselt werden!"
   exit 1
 fi
 
 if [[ "$INTERACTIVE_SELECT" == "true" ]]; then
-  log_info "Interactive mode - select database and backup"
+  log_info "Interaktiver Modus - wähle Datenbank und Backup aus."
 
   DBS_WITH_BACKUPS=( $(get_databases_with_backups) )
   SELECTED_DB=$(select_database_interactive "${DBS_WITH_BACKUPS[@]}")
 
   if [[ "$SELECTED_DB" == "ALL_DATABASES" ]]; then
-    log_info "Selected: ALL_DATABASES. Restoring all databases from their latest backup."
+    log_info "Auswahl: ALL_DATABASES. Stelle alle Datenbanken aus ihren aktuellsten Backups wieder her."
     DATABASE="ALL"
     BACKUP_FILE="LATEST"
   else
@@ -245,13 +245,13 @@ fi
 
 if [[ "$USE_LAST_BACKUP" == "true" ]]; then
   if [[ -z "$DATABASE" ]]; then
-    log_error "--last requires --database parameter"
+    log_error "--last erfordert auch den Parameter --database"
     exit 1
   fi
 
   BACKUP_FILE=$(ls -1t "$BACKUP_DIR/${DATABASE}_full_"*.sql.gz.enc 2>/dev/null | head -1)
   if [[ -z "$BACKUP_FILE" ]]; then
-    log_error "No backups found for database: $DATABASE"
+    log_error "Keine Backups für die Datenbank gefunden: $DATABASE"
     exit 1
   fi
 fi
@@ -260,7 +260,7 @@ if [[ "$GRANTS_ONLY" == "true" ]]; then
   DBS_TO_RESTORE=()
 elif [[ "$DATABASE" == "ALL" ]]; then
   DBS_TO_RESTORE=( $(get_databases_with_backups) )
-  log_info "Restoring all databases: ${DBS_TO_RESTORE[*]}"
+  log_info "Stelle alle Datenbanken wieder her: ${DBS_TO_RESTORE[*]}"
 else
   DBS_TO_RESTORE=("$DATABASE")
 fi
@@ -269,13 +269,13 @@ fi
 if [[ "$SKIP_CONFIRM" != "true" ]]; then
   echo "" >&2
   if [[ "$GRANTS_ONLY" == "true" ]]; then
-    log_warning "This will restore users and grants into container '$MARIADB_CONTAINER'"
+    log_warning "Dies wird User und Berechtigungen im Container '$MARIADB_CONTAINER' wiederherstellen."
   else
-    log_warning "This will OVERWRITE the following database(s) in container '$MARIADB_CONTAINER': ${DBS_TO_RESTORE[*]}$([ "$RESTORE_GRANTS" == "true" ] && echo " (+ users/grants)")"
+    log_warning "Dies wird die folgenden Datenbanken im Container '$MARIADB_CONTAINER' ÜBERSCHREIBEN: ${DBS_TO_RESTORE[*]}$([ "$RESTORE_GRANTS" == "true" ] && echo " (+ User/Berechtigungen)")!"
   fi
-  read -p "Continue? (type 'yes' to confirm): " confirm
+  read -p "Wirklich fortfahren? (Tippe 'yes' zum Bestätigen): " confirm
   if [[ "$confirm" != "yes" ]]; then
-    log_info "Restore cancelled by user"
+    log_info "Wiederherstellung durch Benutzer abgebrochen."
     exit 0
   fi
 fi
@@ -287,7 +287,7 @@ if docker exec "${DOCKER_ENV[@]}" "$MARIADB_CONTAINER" mariadb -u root -e "SELEC
 elif docker exec "$MARIADB_CONTAINER" mariadb -u root -e "SELECT 1;" &>/dev/null; then
   DOCKER_ENV=()
 else
-  log_error "Cannot connect to MariaDB container: $MARIADB_CONTAINER"
+  log_error "Kann keine Verbindung zum MariaDB-Container '$MARIADB_CONTAINER' herstellen."
   exit 1
 fi
 
@@ -303,7 +303,7 @@ for DB_TO_RESTORE in "${DBS_TO_RESTORE[@]}"; do
   if [[ "$DATABASE" == "ALL" ]]; then
     CURRENT_BACKUP_FILE=$(ls -1t "$BACKUP_DIR/${DB_TO_RESTORE}_full_"*.sql.gz.enc 2>/dev/null | head -1)
     if [[ -z "$CURRENT_BACKUP_FILE" ]]; then
-      log_warning "No backup found for $DB_TO_RESTORE. Skipping."
+      log_warning "Kein Backup für $DB_TO_RESTORE gefunden. Wird übersprungen."
       continue
     fi
   else
@@ -311,49 +311,49 @@ for DB_TO_RESTORE in "${DBS_TO_RESTORE[@]}"; do
   fi
 
   if [[ -z "$DB_TO_RESTORE" || -z "$CURRENT_BACKUP_FILE" ]]; then
-    log_error "Database or backup file not specified"
+    log_error "Datenbank oder Backup-Datei nicht angegeben."
     continue
   fi
 
   if [[ ! -f "$CURRENT_BACKUP_FILE" ]]; then
-    log_error "Backup file not found: $CURRENT_BACKUP_FILE"
+    log_error "Backup-Datei nicht gefunden: $CURRENT_BACKUP_FILE"
     continue
   fi
 
-  log_info "--- Processing database: $DB_TO_RESTORE ---"
-  log_info "Selected backup: $CURRENT_BACKUP_FILE"
+  log_info "--- Verarbeite Datenbank: $DB_TO_RESTORE ---"
+  log_info "Ausgewähltes Backup: $CURRENT_BACKUP_FILE"
 
   BACKUP_TIMESTAMP=$(basename "$CURRENT_BACKUP_FILE" | sed "s/${DB_TO_RESTORE}_full_\(.*\)\.sql\.gz\.enc/\1/")
-  debug_log "Backup timestamp: $BACKUP_TIMESTAMP"
+  debug_log "Backup Zeitstempel: $BACKUP_TIMESTAMP"
 
   BACKUP_SIZE=$(stat -c%s "$CURRENT_BACKUP_FILE" 2>/dev/null || stat -f%z "$CURRENT_BACKUP_FILE" 2>/dev/null || echo "0")
   TOTAL_BACKUP_SIZE=$((TOTAL_BACKUP_SIZE + BACKUP_SIZE))
 
   # Step 1: Decrypt and import the full backup
-  log_info "Step 1: Decrypting and restoring full backup..."
+  log_info "Schritt 1: Entschlüssele und importiere vollständiges Backup..."
 
   if ! ./scripts/encrypt_backup.sh --decrypt "$CURRENT_BACKUP_FILE" --key "$ENCRYPT_KEY_FILE"; then
-    log_error "Failed to decrypt backup file for $DB_TO_RESTORE"
+    log_error "Fehler beim Entschlüsseln der Backup-Datei für $DB_TO_RESTORE."
     continue
   fi
 
   DECRYPTED_FILE="${CURRENT_BACKUP_FILE%.enc}"
 
-  log_info "Importing backup into database: $DB_TO_RESTORE"
+  log_info "Importiere Backup in Datenbank: $DB_TO_RESTORE"
   db_exec -e "CREATE DATABASE IF NOT EXISTS \`$DB_TO_RESTORE\`;"
 
   if ! db_exec_stdin "$DB_TO_RESTORE" < <(gunzip -c "$DECRYPTED_FILE"); then
-    log_error "Failed to import backup for $DB_TO_RESTORE"
+    log_error "Fehler beim Importieren des Backups für $DB_TO_RESTORE."
     rm -f "$DECRYPTED_FILE"
     continue
   fi
 
   rm -f "$DECRYPTED_FILE"
-  log_success "Full backup for $DB_TO_RESTORE restored successfully"
+  log_success "Vollständiges Backup für $DB_TO_RESTORE erfolgreich wiederhergestellt."
   PROCESSED_DATABASES=$((PROCESSED_DATABASES + 1))
 
   # Step 2: Roll forward using binary logs
-  log_info "Step 2: Applying binary logs..."
+  log_info "Schritt 2: Wende Binary Logs an..."
 
   BINLOG_INFO_FILE="$BINLOG_INFO_DIR/last_binlog_info_${DB_TO_RESTORE}_${BACKUP_TIMESTAMP}.txt"
   if [[ ! -f "$BINLOG_INFO_FILE" ]]; then
@@ -361,13 +361,13 @@ for DB_TO_RESTORE in "${DBS_TO_RESTORE[@]}"; do
   fi
 
   if [[ ! -f "$BINLOG_INFO_FILE" ]]; then
-    log_warning "Binlog info file not found for backup $BACKUP_TIMESTAMP"
-    log_warning "Cannot apply incremental changes for $DB_TO_RESTORE. Only the full backup was restored."
+    log_warning "Die Binlog-Info-Datei für das Backup $BACKUP_TIMESTAMP wurde nicht gefunden."
+    log_warning "Kann keine inkrementellen Änderungen für $DB_TO_RESTORE anwenden. Nur das Full-Backup wurde wiederhergestellt."
     continue
   fi
 
   read -r START_BINLOG_FILE START_BINLOG_POS < "$BINLOG_INFO_FILE"
-  log_info "Starting from binlog: $START_BINLOG_FILE at position $START_BINLOG_POS"
+  log_info "Starte mit Binlog: $START_BINLOG_FILE an Position $START_BINLOG_POS"
 
   BINLOG_FILES=()
   while IFS= read -r bl_file; do
@@ -377,12 +377,12 @@ for DB_TO_RESTORE in "${DBS_TO_RESTORE[@]}"; do
     fi
   done < <(find "$BINLOG_BACKUP_DIR" -name "mysql-bin.*" -not -name "*.index" -not -name "*.idx" 2>/dev/null | sort -V)
 
-  log_info "Found ${#BINLOG_FILES[@]} binlog file(s) to process."
+  log_info "${#BINLOG_FILES[@]} Binlog-Datei(en) zur Verarbeitung gefunden."
   docker exec "$MARIADB_CONTAINER" mkdir -p /tmp/binlogs 2>/dev/null
 
   for bl_file in "${BINLOG_FILES[@]}"; do
     bl_name=$(basename "$bl_file")
-    debug_log "Processing binlog: $bl_name"
+    debug_log "Verarbeite Binlog: $bl_name"
 
     BL_SIZE=$(stat -c%s "$bl_file" 2>/dev/null || stat -f%z "$bl_file" 2>/dev/null || echo "0")
     TOTAL_BINLOG_SIZE=$((TOTAL_BINLOG_SIZE + BL_SIZE))
@@ -396,10 +396,10 @@ for DB_TO_RESTORE in "${DBS_TO_RESTORE[@]}"; do
     if docker exec "$MARIADB_CONTAINER" mariadb-binlog "${BINLOG_OPTS[@]}" \
       --database="$DB_TO_RESTORE" "/tmp/binlogs/$bl_name" 2>/dev/null | \
       db_exec_stdin "$DB_TO_RESTORE"; then
-      log_success "Applied binlog: $bl_name"
+      log_success "Binlog erfolgreich angewendet: $bl_name"
       TOTAL_BINLOGS_PROCESSED=$((TOTAL_BINLOGS_PROCESSED + 1))
     else
-      log_warning "Failed to apply binlog: $bl_name (may be normal if it contains no relevant changes)"
+      log_warning "Fehler beim Anwenden des Binlogs: $bl_name (kann normal sein, wenn es keine relevanten Änderungen enthält)"
       TOTAL_BINLOGS_ERRORS=$((TOTAL_BINLOGS_ERRORS + 1))
     fi
 
@@ -409,48 +409,48 @@ done
 
 # --- Users & grants -------------------------------------------------------
 if [[ "$RESTORE_GRANTS" == "true" ]]; then
-  log_info "Restoring users and grants..."
+  log_info "Stelle User und Berechtigungen wieder her..."
   GRANTS_BACKUP=$(ls -1t "$BACKUP_DIR"/system_grants_full_*.sql.gz.enc 2>/dev/null | head -1)
 
   if [[ -z "$GRANTS_BACKUP" ]]; then
-    log_warning "No grants backup found (system_grants_full_*.sql.gz.enc) - run a full backup first"
+    log_warning "Kein Berechtigungs-Backup gefunden (system_grants_full_*.sql.gz.enc) - erstelle zuerst ein Full-Backup!"
   elif ./scripts/encrypt_backup.sh --decrypt "$GRANTS_BACKUP" --key "$ENCRYPT_KEY_FILE"; then
     GRANTS_DECRYPTED="${GRANTS_BACKUP%.enc}"
     # --force: existing users produce errors that are safe to skip
     if gunzip -c "$GRANTS_DECRYPTED" | db_exec_stdin --force 2>/dev/null; then
       db_exec -e "FLUSH PRIVILEGES;"
-      log_success "Users and grants restored from $(basename "$GRANTS_BACKUP")"
+      log_success "User und Berechtigungen aus $(basename "$GRANTS_BACKUP") erfolgreich wiederhergestellt."
       PROCESSED_DATABASES=$((PROCESSED_DATABASES + 1))
     else
-      log_error "Failed to import users/grants"
+      log_error "Fehler beim Importieren der User/Berechtigungen."
     fi
     rm -f "$GRANTS_DECRYPTED"
   else
-    log_error "Failed to decrypt grants backup"
+    log_error "Fehler beim Entschlüsseln des Grants-Backups."
   fi
 fi
 
 RESTORE_DURATION=$(( $(date +%s) - RESTORE_START_TIME ))
 
 echo
-log_info "=== RESTORE SUMMARY ==="
+log_info "=== RESTORE ZUSAMMENFASSUNG ==="
 if [[ "$DATABASE" == "ALL" ]]; then
-  log_info "Databases: All (${#DBS_TO_RESTORE[@]} selected, $PROCESSED_DATABASES restored)"
+  log_info "Datenbanken: Alle (${#DBS_TO_RESTORE[@]} ausgewählt, $PROCESSED_DATABASES wiederhergestellt)"
 else
-  log_info "Database: $DATABASE"
+  log_info "Datenbank: $DATABASE"
 fi
-[[ -n "$RESTORE_TO_TIMESTAMP" ]] && log_info "Restored to timestamp: $RESTORE_TO_TIMESTAMP"
-log_info "Duration: ${RESTORE_DURATION}s"
-log_info "Backup size processed: $(human_size "$TOTAL_BACKUP_SIZE")"
+[[ -n "$RESTORE_TO_TIMESTAMP" ]] && log_info "Wiederhergestellt bis Zeitpunkt: $RESTORE_TO_TIMESTAMP"
+log_info "Dauer: ${RESTORE_DURATION}s"
+log_info "Verarbeitete Backup-Größe: $(human_size "$TOTAL_BACKUP_SIZE")"
 if [[ $TOTAL_BINLOG_SIZE -gt 0 ]]; then
-  log_info "Binlog size processed: $(human_size "$TOTAL_BINLOG_SIZE")"
-  log_info "Binlogs applied: $TOTAL_BINLOGS_PROCESSED"
-  [[ $TOTAL_BINLOGS_ERRORS -gt 0 ]] && log_warning "Binlogs with errors: $TOTAL_BINLOGS_ERRORS"
+  log_info "Verarbeitete Binlog-Größe: $(human_size "$TOTAL_BINLOG_SIZE")"
+  log_info "Angewandte Binlogs: $TOTAL_BINLOGS_PROCESSED"
+  [[ $TOTAL_BINLOGS_ERRORS -gt 0 ]] && log_warning "Binlogs mit Fehlern: $TOTAL_BINLOGS_ERRORS"
 fi
 
 if [[ $PROCESSED_DATABASES -eq 0 ]]; then
-  log_error "No databases were restored"
+  log_error "Es wurden keine Datenbanken wiederhergestellt."
   exit 1
 fi
 
-log_success "Restore process completed"
+log_success "Restore-Prozess erfolgreich abgeschlossen!"
