@@ -1,5 +1,5 @@
 #!/bin/bash
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 set -o pipefail
 
@@ -332,7 +332,7 @@ for DB_TO_RESTORE in "${DBS_TO_RESTORE[@]}"; do
   # Step 1: Decrypt and import the full backup
   log_info "Step 1: Decrypting and restoring full backup..."
 
-  if ! ./encrypt_backup.sh --decrypt "$CURRENT_BACKUP_FILE" --key "$ENCRYPT_KEY_FILE"; then
+  if ! ./scripts/encrypt_backup.sh --decrypt "$CURRENT_BACKUP_FILE" --key "$ENCRYPT_KEY_FILE"; then
     log_error "Failed to decrypt backup file for $DB_TO_RESTORE"
     continue
   fi
@@ -414,7 +414,7 @@ if [[ "$RESTORE_GRANTS" == "true" ]]; then
 
   if [[ -z "$GRANTS_BACKUP" ]]; then
     log_warning "No grants backup found (system_grants_full_*.sql.gz.enc) - run a full backup first"
-  elif ./encrypt_backup.sh --decrypt "$GRANTS_BACKUP" --key "$ENCRYPT_KEY_FILE"; then
+  elif ./scripts/encrypt_backup.sh --decrypt "$GRANTS_BACKUP" --key "$ENCRYPT_KEY_FILE"; then
     GRANTS_DECRYPTED="${GRANTS_BACKUP%.enc}"
     # --force: existing users produce errors that are safe to skip
     if gunzip -c "$GRANTS_DECRYPTED" | db_exec_stdin --force 2>/dev/null; then

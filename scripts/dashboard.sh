@@ -1,5 +1,5 @@
 #!/bin/bash
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 set -o pipefail
 
@@ -208,7 +208,7 @@ render_tui() {
       out+="$(printf "  ${color}%-24s %6s %12s %10s${NC}" "$name" "$count" "$size" "$age")\n"
     done <<< "$COLLECT_BACKUPS"
   else
-    out+="  ${YELLOW}No backups found - run: ./backup.sh --full${NC}\n"
+    out+="  ${YELLOW}No backups found - run: ./scripts/backup.sh --full${NC}\n"
   fi
 
   if [[ -n "$COLLECT_LAST_BACKUP_LOG" ]]; then
@@ -316,7 +316,7 @@ case "$MODE" in
     collect_data
     render_html
     log_success "Dashboard written to $HTML_FILE (auto-refreshes every ${INTERVAL}s while regenerated)"
-    log_info "Keep it current with: watch -n $INTERVAL ./dashboard.sh --html $HTML_FILE"
+    log_info "Keep it current with: watch -n $INTERVAL ./scripts/dashboard.sh --html $HTML_FILE"
     ;;
   tui)
     trap 'clear; exit 0' INT TERM

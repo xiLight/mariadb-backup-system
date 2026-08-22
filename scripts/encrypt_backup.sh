@@ -1,5 +1,5 @@
 #!/bin/bash
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 set -e
 
@@ -52,7 +52,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --help)
-      echo "Usage: ./encrypt_backup.sh [--encrypt|--decrypt] FILE [OPTIONS]"
+      echo "Usage: ./scripts/encrypt_backup.sh [--encrypt|--decrypt] FILE [OPTIONS]"
       echo "  --encrypt            Encrypt the specified file (creates FILE.enc)"
       echo "  --decrypt            Decrypt the specified file"
       echo "  --key FILE           Key file (default: .backup_encryption_key)"

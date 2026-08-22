@@ -1,5 +1,5 @@
 #!/bin/bash
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 set -o pipefail
 
@@ -127,7 +127,7 @@ live_metrics || log_info "(DB not reachable - skipping live metrics)"
 
 if [[ "$APPLY" != "true" ]]; then
   echo ""
-  log_info "Review the values above, then apply with: ./tune.sh --apply"
+  log_info "Review the values above, then apply with: ./scripts/tune.sh --apply"
   log_info "(or set them manually in .env)"
   exit 0
 fi

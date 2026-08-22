@@ -1,5 +1,5 @@
 #!/bin/bash
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 source "./lib/logging.sh"
 
@@ -13,9 +13,9 @@ source .env 2>/dev/null || { log_error "Failed to source .env file"; exit 1; }
 # failures and important events - never breaks the caller (best effort).
 #
 # Usage:
-#   ./notify.sh LEVEL TITLE MESSAGE...   LEVEL: info|warning|error|success
-#   ./notify.sh --heartbeat              ping HEARTBEAT_URL (e.g. Uptime-Kuma)
-#   ./notify.sh --test                   send a test message to all channels
+#   ./scripts/notify.sh LEVEL TITLE MESSAGE...   LEVEL: info|warning|error|success
+#   ./scripts/notify.sh --heartbeat              ping HEARTBEAT_URL (e.g. Uptime-Kuma)
+#   ./scripts/notify.sh --test                   send a test message to all channels
 
 HOSTNAME_TAG=$(hostname 2>/dev/null || echo "mariadb-backup")
 

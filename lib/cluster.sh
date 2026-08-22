@@ -6,13 +6,13 @@
 # CONTAINER names are unique per stack instance: ${STACK_NAME}-node1 etc.
 # Helpers take the service name and map to the container where needed.
 
-CLUSTER_COMPOSE_FILE="${CLUSTER_COMPOSE_FILE:-docker-compose.cluster.yml}"
+CLUSTER_COMPOSE_FILE="${CLUSTER_COMPOSE_FILE:-docker/docker-compose.cluster.yml}"
 CLUSTER_NODES=(node1 node2 node3)
 CLUSTER_SYNC_TIMEOUT="${CLUSTER_SYNC_TIMEOUT:-600}"
 STACK_NAME="${STACK_NAME:-mariadb}"
 
 compose_cluster() {
-  docker compose -f "$CLUSTER_COMPOSE_FILE" "$@"
+  docker compose --project-directory . -f "$CLUSTER_COMPOSE_FILE" "$@"
 }
 
 # node1 -> ${STACK_NAME}-node1 (also: haproxy -> ${STACK_NAME}-haproxy)

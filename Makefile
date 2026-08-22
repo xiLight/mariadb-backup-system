@@ -10,7 +10,7 @@ CONTAINER := $(shell v=$$(grep -E '^MARIADB_CONTAINER=' .env 2>/dev/null | cut -
 # Cluster mode is active once cluster_data exists - container-management
 # targets then operate on the cluster compose file
 IS_CLUSTER := $(shell [ -d cluster_data ] && echo yes || echo no)
-COMPOSE_ARGS := $(shell [ -d cluster_data ] && echo "-f docker-compose.cluster.yml")
+COMPOSE_ARGS := $(shell [ -d cluster_data ] && echo "--project-directory . -f docker/docker-compose.cluster.yml" || echo "--project-directory . -f docker/docker-compose.yml")
 
 .PHONY: help install env start stop restart status backup backup-full backup-incremental restore verify cleanup health logs clean build database user provision superuser list-db dashboard dashboard-html offsite offsite-dry cluster-reinit restore-test notify-test tls tls-status drill tune tune-apply
 
@@ -119,22 +119,22 @@ env:
 
 install:
 	@echo "Installing MariaDB Backup System..."
-	@chmod +x install.sh
-	@./install.sh --allow-root
+	@chmod +x scripts/install.sh
+	@./scripts/install.sh --allow-root
 
 # Container management (cluster-aware: delegates to cluster.sh in cluster mode)
 start:
-	@if [ "$(IS_CLUSTER)" = "yes" ]; then ./cluster.sh start; else echo "Starting MariaDB container..."; $(COMPOSE) up -d; fi
+	@if [ "$(IS_CLUSTER)" = "yes" ]; then ./scripts/cluster.sh start; else echo "Starting MariaDB container..."; $(COMPOSE) $(COMPOSE_ARGS) up -d; fi
 
 stop:
-	@if [ "$(IS_CLUSTER)" = "yes" ]; then ./cluster.sh stop; else echo "Stopping MariaDB container..."; $(COMPOSE) down; fi
+	@if [ "$(IS_CLUSTER)" = "yes" ]; then ./scripts/cluster.sh stop; else echo "Stopping MariaDB container..."; $(COMPOSE) $(COMPOSE_ARGS) down; fi
 
 restart:
-	@if [ "$(IS_CLUSTER)" = "yes" ]; then $(COMPOSE) $(COMPOSE_ARGS) restart; else echo "Restarting MariaDB container..."; $(COMPOSE) restart; fi
+	@if [ "$(IS_CLUSTER)" = "yes" ]; then $(COMPOSE) $(COMPOSE_ARGS) restart; else echo "Restarting MariaDB container..."; $(COMPOSE) $(COMPOSE_ARGS) restart; fi
 
 status:
-	@if [ "$(IS_CLUSTER)" = "yes" ]; then ./cluster.sh status; else \
-		echo "Container Status:"; $(COMPOSE) ps; \
+	@if [ "$(IS_CLUSTER)" = "yes" ]; then ./scripts/cluster.sh status; else \
+		echo "Container Status:"; $(COMPOSE) $(COMPOSE_ARGS) ps; \
 		echo ""; echo "MariaDB Status:"; \
 		docker exec -e MYSQL_PWD=$(shell grep MARIADB_ROOT_PASSWORD .env | cut -d= -f2) $(CONTAINER) mariadb -u root -e "SHOW STATUS LIKE 'Uptime%';" 2>/dev/null || echo "Cannot connect to MariaDB"; \
 	fi
@@ -146,129 +146,129 @@ build:
 # Backup operations
 backup:
 	@echo "Creating incremental backup..."
-	@./backup.sh --incremental
+	@./scripts/backup.sh --incremental
 
 backup-full:
 	@echo "Creating full backup..."
-	@./backup.sh --full
+	@./scripts/backup.sh --full
 
 backup-empty:
 	@echo "Creating full backup including empty databases..."
-	@./backup.sh --full --include-empty
+	@./scripts/backup.sh --full --include-empty
 
 # Restore operations
 restore:
 	@echo "Starting restore process..."
-	@./restore.sh
+	@./scripts/restore.sh
 
 # Galera cluster operations
 cluster-init:
-	@./cluster.sh init
+	@./scripts/cluster.sh init
 
 cluster-start:
-	@./cluster.sh start
+	@./scripts/cluster.sh start
 
 cluster-stop:
-	@./cluster.sh stop
+	@./scripts/cluster.sh stop
 
 cluster-status:
-	@./cluster.sh status
+	@./scripts/cluster.sh status
 
 cluster-reinit:
-	@./cluster.sh reinit
+	@./scripts/cluster.sh reinit
 
 update:
-	@./update.sh
+	@./scripts/update.sh
 
 heal:
-	@./heal.sh
+	@./scripts/heal.sh
 
 heal-daemon:
-	@./heal.sh --daemon
+	@./scripts/heal.sh --daemon
 
 # Database administration (interactive without NAME, scriptable with NAME=/PASS=)
 database:
-	@./db_admin.sh create-database $(NAME)
+	@./scripts/db_admin.sh create-database $(NAME)
 
 user:
-	@./db_admin.sh create-user $(NAME) $(PASS)
+	@./scripts/db_admin.sh create-user $(NAME) $(PASS)
 
 provision:
-	@./db_admin.sh provision $(NAME) $(PASS)
+	@./scripts/db_admin.sh provision $(NAME) $(PASS)
 
 superuser:
-	@./db_admin.sh create-superuser $(NAME) $(PASS)
+	@./scripts/db_admin.sh create-superuser $(NAME) $(PASS)
 
 list-db:
-	@./db_admin.sh list
+	@./scripts/db_admin.sh list
 
 # Verify operations
 verify:
 	@echo "Verifying all backups..."
-	@./verify_backup.sh
+	@./scripts/verify_backup.sh
 
 verify-latest:
 	@echo "Verifying latest backups..."
-	@./verify_backup.sh --latest
+	@./scripts/verify_backup.sh --latest
 
 # Offsite replication
 offsite:
-	@./offsite_sync.sh --verify
+	@./scripts/offsite_sync.sh --verify
 
 offsite-dry:
-	@./offsite_sync.sh --dry-run
+	@./scripts/offsite_sync.sh --dry-run
 
 # Restore drill, notifications, TLS, failover test
 restore-test:
-	@./restore_test.sh
+	@./scripts/restore_test.sh
 
 notify-test:
-	@./notify.sh --test
+	@./scripts/notify.sh --test
 
 tls:
-	@./tls_setup.sh --self-signed
+	@./scripts/tls_setup.sh --self-signed
 
 tls-status:
-	@./tls_setup.sh --status
+	@./scripts/tls_setup.sh --status
 
 tune:
-	@./tune.sh
+	@./scripts/tune.sh
 
 tune-apply:
-	@./tune.sh --apply
+	@./scripts/tune.sh --apply
 
 drill:
-	@./cluster.sh drill
+	@./scripts/cluster.sh drill
 
 # Cleanup operations
 cleanup: cleanup-backups cleanup-logs
 
 cleanup-backups:
 	@echo "Cleaning old backups..."
-	@./cleanup_backups.sh
+	@./scripts/cleanup_backups.sh
 
 cleanup-logs:
 	@echo "Rotating and pruning logs..."
-	@./log_cleanup.sh
+	@./scripts/log_cleanup.sh
 
 cleanup-logs-all:
 	@echo "Truncating all logs..."
-	@./log_cleanup.sh --all
+	@./scripts/log_cleanup.sh --all
 
 # Health and monitoring
 dashboard:
-	@./dashboard.sh
+	@./scripts/dashboard.sh
 
 dashboard-html:
-	@./dashboard.sh --html status.html
+	@./scripts/dashboard.sh --html status.html
 
 health:
 	@echo "Running health check..."
-	@./health_check.sh
+	@./scripts/health_check.sh
 
 health-test:
 	@echo "Running health check with backup test..."
-	@./health_check.sh --test-backup
+	@./scripts/health_check.sh --test-backup
 
 # Logging
 logs:

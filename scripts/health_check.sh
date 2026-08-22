@@ -1,5 +1,5 @@
 #!/bin/bash
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 source "./lib/logging.sh"
 
@@ -202,7 +202,7 @@ check_recent_backups() {
         log_success "Found $RECENT_BACKUPS recent backup(s) from last 7 days"
     else
         log_warning "No recent backups found from last 7 days"
-        log_info "Run: ./backup.sh --full"
+        log_info "Run: ./scripts/backup.sh --full"
     fi
 
     return 0
@@ -218,7 +218,7 @@ check_offsite_sync() {
     fi
 
     if [ ! -f "./logs/.last_offsite_sync" ]; then
-        log_warning "Offsite target configured but no sync has run yet - run: ./offsite_sync.sh"
+        log_warning "Offsite target configured but no sync has run yet - run: ./scripts/offsite_sync.sh"
         return 1
     fi
 
@@ -260,7 +260,7 @@ check_disk_space() {
 run_backup_test() {
     if [ "$1" = "--test-backup" ]; then
         log_info "Running backup test..."
-        if ./backup.sh --full --include-empty >/dev/null 2>&1; then
+        if ./scripts/backup.sh --full --include-empty >/dev/null 2>&1; then
             log_success "Backup test completed successfully"
         else
             log_error "Backup test failed - check logs/backup.log for details"
@@ -289,9 +289,9 @@ show_summary() {
     echo
     echo -e "${BLUE}Useful Commands:${NC}"
     echo "  docker logs $MARIADB_CONTAINER    # View MariaDB logs"
-    echo "  ./backup.sh --full                # Create full backup"
-    echo "  ./verify_backup.sh --latest       # Verify latest backups"
-    echo "  ./health_check.sh --test-backup   # Run with backup test"
+    echo "  ./scripts/backup.sh --full                # Create full backup"
+    echo "  ./scripts/verify_backup.sh --latest       # Verify latest backups"
+    echo "  ./scripts/health_check.sh --test-backup   # Run with backup test"
     echo
 }
 

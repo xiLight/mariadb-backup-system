@@ -1,5 +1,5 @@
 #!/bin/bash
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 set -o pipefail
 
@@ -402,7 +402,7 @@ for DB in "${DATABASES[@]}"; do
 
   ENCRYPT_ARGS=(--encrypt "$BACKUP_FILE" --key "$ENCRYPT_KEY_FILE")
   [[ "$CREATE_CHECKSUMS" == "false" ]] && ENCRYPT_ARGS+=(--no-checksum)
-  if ./encrypt_backup.sh "${ENCRYPT_ARGS[@]}"; then
+  if ./scripts/encrypt_backup.sh "${ENCRYPT_ARGS[@]}"; then
     rm -f "$BACKUP_FILE"
     BACKUP_FILE="${BACKUP_FILE}.enc"
     log_success "Backup encrypted: $(basename "$BACKUP_FILE")"
@@ -450,7 +450,7 @@ if [[ "$BACKUP_MODE" == "full" && -z "$SPECIFIC_DATABASE" ]]; then
     "$COMPRESS_CMD" "$GRANTS_FILE" && GRANTS_FILE="${GRANTS_FILE}.gz"
     ENCRYPT_ARGS=(--encrypt "$GRANTS_FILE" --key "$ENCRYPT_KEY_FILE")
     [[ "$CREATE_CHECKSUMS" == "false" ]] && ENCRYPT_ARGS+=(--no-checksum)
-    if ./encrypt_backup.sh "${ENCRYPT_ARGS[@]}" >/dev/null; then
+    if ./scripts/encrypt_backup.sh "${ENCRYPT_ARGS[@]}" >/dev/null; then
       rm -f "$GRANTS_FILE"
       log_success "Users and grants backed up: $(basename "$GRANTS_FILE").enc"
     else
@@ -485,17 +485,17 @@ log_info "Compression: $([ "$COMPRESS_BACKUPS" == "true" ] && echo "enabled" || 
 
 if [[ $FAILED_BACKUPS -gt 0 ]]; then
   log_error "$FAILED_BACKUPS backup(s) failed. Check $LOG_FILE for details."
-  [[ -x ./notify.sh ]] && ./notify.sh error "Backup FAILED" "$FAILED_BACKUPS of $TOTAL_DATABASES database backup(s) failed (mode: $BACKUP_MODE). Check logs/backup.log" || true
+  [[ -x ./scripts/notify.sh ]] && ./scripts/notify.sh error "Backup FAILED" "$FAILED_BACKUPS of $TOTAL_DATABASES database backup(s) failed (mode: $BACKUP_MODE). Check logs/backup.log" || true
   exit 1
 fi
 
 log_success "All backups completed successfully! Encrypted files stored in: $BACKUP_DIR"
-[[ -x ./notify.sh ]] && ./notify.sh --heartbeat || true
+[[ -x ./scripts/notify.sh ]] && ./scripts/notify.sh --heartbeat || true
 
 # Optional offsite replication after a fully successful run
 if [[ "${OFFSITE_AUTO:-no}" == "yes" && $SUCCESSFUL_BACKUPS -gt 0 ]]; then
   log_info "OFFSITE_AUTO enabled - replicating backups offsite..."
-  if ./offsite_sync.sh; then
+  if ./scripts/offsite_sync.sh; then
     log_success "Offsite replication completed"
   else
     log_error "Offsite replication failed - backups exist locally but are NOT replicated"

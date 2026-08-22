@@ -43,14 +43,14 @@ RUN mkdir -p /var/lib/mysql /var/run/mysqld /etc/mysql/conf.d /tmp/binlogs && \
     chmod 777 /var/run/mysqld
 
 # Copy MariaDB configuration
-COPY my_custom.cnf /etc/mysql/conf.d/
-COPY galera.cnf.template /etc/mysql/galera.cnf.template
+COPY config/my_custom.cnf /etc/mysql/conf.d/
+COPY config/galera.cnf.template /etc/mysql/galera.cnf.template
 
 # Copy logging configuration
 COPY lib/logging.sh /usr/local/lib/
 
 # Copy and prepare entrypoint script
-COPY entrypoint.sh /usr/local/bin/
+COPY scripts/entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 EXPOSE 3306

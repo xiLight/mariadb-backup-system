@@ -1,5 +1,5 @@
 #!/bin/bash
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 set -o pipefail
 
@@ -58,7 +58,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --help       Show this help message"
       echo ""
       echo "Cron example (hourly, after verifying):"
-      echo "  0 * * * * cd $(pwd) && ./offsite_sync.sh --verify >/dev/null 2>&1"
+      echo "  0 * * * * cd $(pwd) && ./scripts/offsite_sync.sh --verify >/dev/null 2>&1"
       echo ""
       echo "IMPORTANT: back up .backup_encryption_key separately (password"
       echo "manager / vault) - it is never synced, and without it neither"
@@ -86,9 +86,9 @@ fi
 
 if [[ "$VERIFY_FIRST" == "true" ]]; then
   log_info "Verifying latest backups before sync..."
-  if ! ./verify_backup.sh --latest >/dev/null 2>&1; then
+  if ! ./scripts/verify_backup.sh --latest >/dev/null 2>&1; then
     log_error "Backup verification FAILED - not syncing corrupted backups offsite"
-    log_error "Details: ./verify_backup.sh --latest"
+    log_error "Details: ./scripts/verify_backup.sh --latest"
     exit 1
   fi
   log_success "Verification passed"
@@ -185,7 +185,7 @@ SYNC_DURATION=$(( $(date +%s) - SYNC_START ))
 
 if [[ "$SYNC_OK" != "true" ]]; then
   log_error "Offsite sync FAILED after ${SYNC_DURATION}s - backups are NOT replicated"
-  [[ -x ./notify.sh ]] && ./notify.sh error "Offsite sync FAILED" "Backups could not be replicated to $OFFSITE_TARGET. They exist locally only!" || true
+  [[ -x ./scripts/notify.sh ]] && ./scripts/notify.sh error "Offsite sync FAILED" "Backups could not be replicated to $OFFSITE_TARGET. They exist locally only!" || true
   exit 1
 fi
 

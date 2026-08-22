@@ -1,5 +1,5 @@
 #!/bin/bash
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 set -o pipefail
 
@@ -119,7 +119,7 @@ CLUSTER_RUNNING=$(compose_cluster ps -q node1 node2 node3 2>/dev/null | wc -l)
 if [[ "$CLUSTER_RUNNING" -eq 0 ]]; then
   if [[ -d "./cluster_data" ]]; then
     log_error "Cluster installation detected but no nodes are running."
-    log_error "Start/recover it first: ./cluster.sh start (or ./heal.sh), then re-run the update."
+    log_error "Start/recover it first: ./scripts/cluster.sh start (or ./scripts/heal.sh), then re-run the update."
     exit 1
   fi
 
@@ -141,7 +141,7 @@ log_info "Galera cluster detected - performing rolling update"
 HEALTHY=$(cluster_healthy_count)
 if [[ "$HEALTHY" -lt 3 ]]; then
   log_error "Cluster is not fully healthy ($HEALTHY/3 nodes synced)."
-  log_error "A rolling update needs all 3 nodes. Run ./heal.sh first."
+  log_error "A rolling update needs all 3 nodes. Run ./scripts/heal.sh first."
   print_cluster_status
   exit 1
 fi

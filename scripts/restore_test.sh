@@ -1,5 +1,5 @@
 #!/bin/bash
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 set -o pipefail
 
@@ -45,7 +45,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --help           Show this help message"
       echo ""
       echo "Cron example (weekly, Sunday 05:00):"
-      echo "  0 5 * * 0 cd $(pwd) && ./restore_test.sh >/dev/null 2>&1"
+      echo "  0 5 * * 0 cd $(pwd) && ./scripts/restore_test.sh >/dev/null 2>&1"
       exit 0
       ;;
     *)
@@ -79,7 +79,7 @@ trap cleanup EXIT
 
 fail() {
   log_error "$1"
-  [[ -x ./notify.sh ]] && ./notify.sh error "Restore test FAILED" "$1" || true
+  [[ -x ./scripts/notify.sh ]] && ./scripts/notify.sh error "Restore test FAILED" "$1" || true
   exit 1
 }
 
@@ -127,7 +127,7 @@ for db in "${!LATEST_BACKUPS[@]}"; do
   BACKUP_FILE="${LATEST_BACKUPS[$db]}"
   log_info "--- Testing restore of: $db ($(basename "$BACKUP_FILE")) ---"
 
-  if ! ./encrypt_backup.sh --decrypt "$BACKUP_FILE" --key "$ENCRYPT_KEY_FILE" >/dev/null 2>&1; then
+  if ! ./scripts/encrypt_backup.sh --decrypt "$BACKUP_FILE" --key "$ENCRYPT_KEY_FILE" >/dev/null 2>&1; then
     log_error "$db: decryption failed"
     FAILED=$((FAILED + 1))
     continue

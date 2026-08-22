@@ -36,16 +36,16 @@ chmod +x *.sh
 # Quick installation with automatic setup
 make install
 # or interactively choose single node vs. HA cluster:
-./install.sh
+./scripts/
 # or non-interactive:
-./install.sh --single                  # one MariaDB container
-./install.sh --cluster                 # 3-node Galera cluster + HAProxy + self-healing cron
-./install.sh --cluster --stack shop    # unique stack name -> shop-node1, shop-haproxy, ...
+./scripts/ --single                  # one MariaDB container
+./scripts/ --cluster                 # 3-node Galera cluster + HAProxy + self-healing cron
+./scripts/ --cluster --stack shop    # unique stack name -> shop-node1, shop-haproxy, ...
 
 # Verify installation
 make health
 # or
-./health_check.sh
+./scripts/
 ```
 
 The installer does everything - after it finishes, the system is ready to use:
@@ -57,7 +57,7 @@ The installer does everything - after it finishes, the system is ready to use:
 2. Generates secure passwords and the backup encryption key
 3. Creates directories, networks, and starts the containers
 4. Cluster mode: initializes the Galera cluster **and installs the self-healing
-   cron job** (`./heal.sh` every minute) - no manual steps needed
+   cron job** (`./scripts/` every minute) - no manual steps needed
 5. Runs an initial backup test
 
 ### 2. Manual Setup (without installer)
@@ -73,9 +73,9 @@ docker compose up -d
 ### 3. Run Your First Backup
 
 ```bash
-./backup.sh --full                    # full backup
-./backup.sh --full --include-empty    # include databases without tables
-./backup.sh --incremental             # binlog-based incremental backup
+./scripts/ --full                    # full backup
+./scripts/ --full --include-empty    # include databases without tables
+./scripts/ --incremental             # binlog-based incremental backup
 ```
 
 A full backup creates:
@@ -87,10 +87,10 @@ A full backup creates:
 ### 4. Restoring from Backup
 
 ```bash
-./restore.sh                                        # interactive selection
-./restore.sh --database ALL                         # all DBs from their latest backup
-./restore.sh --database mydb --last                 # one DB, latest backup
-./restore.sh --to-timestamp "YYYY-MM-DD HH:MM:SS"   # point-in-time recovery
+./scripts/                                        # interactive selection
+./scripts/ --database ALL                         # all DBs from their latest backup
+./scripts/ --database mydb --last                 # one DB, latest backup
+./scripts/ --to-timestamp "YYYY-MM-DD HH:MM:SS"   # point-in-time recovery
 ```
 
 ## Configuration
@@ -180,16 +180,16 @@ unchanged - the cluster lives in its own compose file.
 
 ```bash
 # One-time initialization (bootstraps node1, joins node2+3, starts HAProxy)
-./cluster.sh init          # or: make cluster-init
+./scripts/ init          # or: make cluster-init
 
 # Daily operations
-./cluster.sh status        # cluster health overview
-./cluster.sh stop          # graceful shutdown
-./cluster.sh start         # start again (safe cold-start via heal.sh)
+./scripts/ status        # cluster health overview
+./scripts/ stop          # graceful shutdown
+./scripts/ start         # start again (safe cold-start via heal.sh)
 
 # Factory reset: tear down + rebuild with a fresh Portolan subnet.
 # DELETES all cluster data - restore from ./backups afterwards if needed.
-./cluster.sh reinit        # or: make cluster-reinit
+./scripts/ reinit        # or: make cluster-reinit
 ```
 
 Connect your applications to the HAProxy ports (see `.env` for actual values):
@@ -202,9 +202,9 @@ Connect your applications to the HAProxy ports (see `.env` for actual values):
 ### TLS for Client Connections
 
 ```bash
-./tls_setup.sh --domain db.example.com --ip 203.0.113.10   # own CA + cert
-./tls_setup.sh --import fullchain.pem key.pem   # reuse Coolify/Traefik/Caddy/certbot certs
-./tls_setup.sh --status              # or: make tls-status
+./scripts/ --domain db.example.com --ip 203.0.113.10   # own CA + cert
+./scripts/ --import fullchain.pem key.pem   # reuse Coolify/Traefik/Caddy/certbot certs
+./scripts/ --status              # or: make tls-status
 ```
 
 The MySQL protocol negotiates TLS **in-protocol** (STARTTLS-style), so TLS
@@ -229,7 +229,7 @@ server. Imported certs must be re-imported after renewal (cron-able).
 ### Failover Drill
 
 ```bash
-./cluster.sh drill        # or: make drill
+./scripts/ drill        # or: make drill
 ```
 
 Stops node1 in a controlled way, proves that HAProxy fails over and queries
@@ -238,7 +238,7 @@ keep working, then brings node1 back and waits for full sync. Run quarterly.
 ### Rolling Updates (zero downtime)
 
 ```bash
-./update.sh                # or: make update
+./scripts/                # or: make update
 ```
 
 `update.sh` pulls the latest version from git, rebuilds the image, then updates
@@ -247,16 +247,16 @@ fully `Synced`, then updates node2, then node3 - exactly one node is ever down.
 The update aborts immediately if the cluster is not fully healthy.
 
 ```bash
-./update.sh --skip-pull    # rebuild + roll without git pull
-./update.sh --yes          # non-interactive (for automation)
+./scripts/ --skip-pull    # rebuild + roll without git pull
+./scripts/ --yes          # non-interactive (for automation)
 ```
 
 ### Self-Healing
 
 ```bash
-./heal.sh                  # one-shot check (ideal for cron)
-./heal.sh --daemon         # continuous monitoring (HEAL_INTERVAL, default 30s)
-./heal.sh --recover        # force full-cluster recovery
+./scripts/                  # one-shot check (ideal for cron)
+./scripts/ --daemon         # continuous monitoring (HEAL_INTERVAL, default 30s)
+./scripts/ --recover        # force full-cluster recovery
 ```
 
 What it heals automatically:
@@ -265,9 +265,9 @@ What it heals automatically:
 - **Whole cluster down** → bootstraps from the node with the newest data (`grastate.dat` seqno), then rejoins the others
 - **HAProxy down** → restarted
 
-`./install.sh --cluster` installs this cron job automatically. Manual setup:
+`./scripts/ --cluster` installs this cron job automatically. Manual setup:
 ```
-* * * * * cd /path/to/mariadb-backup-system && ./heal.sh >/dev/null 2>&1
+* * * * * cd /path/to/mariadb-backup-system && ./scripts/ >/dev/null 2>&1
 ```
 
 ### Unique Names per Stack
@@ -328,64 +328,64 @@ other nodes automatically (SQL imports go through Galera replication).
 
 ```bash
 # Full backup
-./backup.sh --full
+./scripts/ --full
 
 # Full backup including empty databases
-./backup.sh --full --include-empty
+./scripts/ --full --include-empty
 
 # Incremental backup (binary logs only)
-./backup.sh --incremental
+./scripts/ --incremental
 
 # Full backup with verification (decrypt + integrity test after creation)
-./backup.sh --full --verify
+./scripts/ --full --verify
 
 # Backup a single database only
-./backup.sh --full --database myapp_db
+./scripts/ --full --database myapp_db
 
 # Custom encryption key
-./backup.sh --full --key /path/to/custom.key
+./scripts/ --full --key /path/to/custom.key
 
 # Skip compression / checksum creation
-./backup.sh --full --no-compress
-./backup.sh --full --no-checksums
+./scripts/ --full --no-compress
+./scripts/ --full --no-checksums
 ```
 
 #### Verify Commands
 
 ```bash
 # Verify all backups (checksum + decryption + gzip integrity)
-./verify_backup.sh
+./scripts/
 
 # Verify only the latest backup per database
-./verify_backup.sh --latest
+./scripts/ --latest
 
 # Verify backups of a specific database
-./verify_backup.sh --database myapp_db
+./scripts/ --database myapp_db
 ```
 
 #### Restore Commands
 
 ```bash
 # Interactive restore - select database and backup
-./restore.sh
+./scripts/
 
 # Restore all databases using latest backups
-./restore.sh --database ALL
+./scripts/ --database ALL
 
 # Restore specific database with latest backup
-./restore.sh --database myapp_db --last
+./scripts/ --database myapp_db --last
 
 # Point-in-time recovery to specific timestamp
-./restore.sh --to-timestamp "YYYY-MM-DD HH:MM:SS"
+./scripts/ --to-timestamp "YYYY-MM-DD HH:MM:SS"
 
 # Skip the confirmation prompt (for automation/cron)
-./restore.sh --database myapp_db --last --yes
+./scripts/ --database myapp_db --last --yes
 
 # Restore with verbose output
-./restore.sh --verbose
+./scripts/ --verbose
 
 # Use specific backup file
-./restore.sh --database myapp_db --backup-file backup_file.sql.gz.enc
+./scripts/ --database myapp_db --backup-file backup_file.sql.gz.enc
 ```
 
 > **Note:** Restoring overwrites the target database. The script asks for
@@ -394,9 +394,9 @@ other nodes automatically (SQL imports go through Galera replication).
 #### Restore Drill (prove backups are restorable)
 
 ```bash
-./restore_test.sh                  # or: make restore-test
-./restore_test.sh --database mydb  # test one database only
-./restore_test.sh --keep           # keep the test container for inspection
+./scripts/                  # or: make restore-test
+./scripts/ --database mydb  # test one database only
+./scripts/ --keep           # keep the test container for inspection
 ```
 
 Imports the latest backup of every database into a **throwaway container**
@@ -407,7 +407,7 @@ import. Recommended weekly via cron; failures trigger a notification.
 #### Notifications
 
 ```bash
-./notify.sh --test                 # or: make notify-test
+./scripts/ --test                 # or: make notify-test
 ```
 
 Configure any of these in `.env` - failures in backup/heal/offsite/restore-test
@@ -430,8 +430,8 @@ Full backups automatically include an encrypted dump of all users and grants
 lose every account created after installation.
 
 ```bash
-./restore.sh --database ALL --with-grants   # restore everything incl. accounts
-./restore.sh --grants-only                  # restore ONLY users/grants
+./scripts/ --database ALL --with-grants   # restore everything incl. accounts
+./scripts/ --grants-only                  # restore ONLY users/grants
 ```
 
 #### Offsite Replication
@@ -441,8 +441,8 @@ lose every account created after installation.
 #   OFFSITE_TARGET=user@backuphost:/backups/mariadb   (rsync over SSH)
 #   OFFSITE_METHOD=rclone + OFFSITE_TARGET=remote:dir (any rclone backend)
 
-./offsite_sync.sh --dry-run    # preview what would be transferred
-./offsite_sync.sh --verify     # verify latest backups, then sync
+./scripts/ --dry-run    # preview what would be transferred
+./scripts/ --verify     # verify latest backups, then sync
 make offsite                   # same as --verify
 
 # Or fully automatic after every backup:
@@ -459,15 +459,15 @@ offsite sync is older than 7 days.
 Binlogs (which contain all data changes in plaintext) are **encrypted before
 replication** (`OFFSITE_ENCRYPT_BINLOGS=yes`, incremental staging in
 `backups/binlogs_enc/`); the plaintext `binlogs/` directory never leaves the
-server. Decrypt offsite binlogs with `./encrypt_backup.sh --decrypt`.
+server. Decrypt offsite binlogs with `./scripts/ --decrypt`.
 
 #### Dashboard
 
 ```bash
-./dashboard.sh                 # live terminal dashboard (q to quit)
-./dashboard.sh --once          # print once and exit
-./dashboard.sh --html          # write status.html (auto-refreshing page)
-./dashboard.sh --interval 10   # refresh every 10s instead of 5s
+./scripts/                 # live terminal dashboard (q to quit)
+./scripts/ --once          # print once and exit
+./scripts/ --html          # write status.html (auto-refreshing page)
+./scripts/ --interval 10   # refresh every 10s instead of 5s
 ```
 
 Shows server status, cluster health, database sizes, backup freshness per
@@ -479,19 +479,19 @@ exposing DB internals: `ssh -L 8000:localhost:8000 server` + any local server.
 
 ```bash
 # Create a database
-./db_admin.sh create-database mydb          # or: make database NAME=mydb
+./scripts/ create-database mydb          # or: make database NAME=mydb
 
 # Create a user (password auto-generated if omitted, shown once)
-./db_admin.sh create-user myuser            # or: make user NAME=myuser
+./scripts/ create-user myuser            # or: make user NAME=myuser
 
 # Provision: database + same-named user with ALL privileges on that DB only
-./db_admin.sh provision myapp               # or: make provision NAME=myapp
+./scripts/ provision myapp               # or: make provision NAME=myapp
 
 # Superuser with full access to all databases (asks for confirmation)
-./db_admin.sh create-superuser admin        # or: make superuser NAME=admin
+./scripts/ create-superuser admin        # or: make superuser NAME=admin
 
 # List databases and users
-./db_admin.sh list                          # or: make list-db
+./scripts/ list                          # or: make list-db
 ```
 
 Without arguments the commands ask interactively. In cluster mode all
@@ -504,22 +504,22 @@ changes replicate to every node automatically.
 #   generations: keep the last N full backups per DB
 #   gfs:         keep 7 daily + 4 weekly + 12 monthly archives (long history,
 #                little storage; binlog roll-forward covers the daily window)
-./cleanup_backups.sh
+./scripts/
 
 # Clean binary logs no longer needed by any kept backup
-./cleanup_binlogs.sh
+./scripts/
 
 # Rotate oversized logs and prune old rotated logs
-./log_cleanup.sh
+./scripts/
 
 # Truncate all logs
-./log_cleanup.sh --all
+./scripts/ --all
 
 # System health check
-./health_check.sh
+./scripts/
 
 # Health check with backup test
-./health_check.sh --test-backup
+./scripts/ --test-backup
 ```
 
 #### Using Make (Recommended)
@@ -636,7 +636,7 @@ The project uses a centralized logging system located in `lib/logging.sh` that p
 
 ```bash
 # Rotate oversized logs, prune rotated logs older than LOG_RETENTION_DAYS
-./log_cleanup.sh
+./scripts/
 
 # View recent backup operations
 tail -f logs/backup.log
@@ -661,7 +661,7 @@ ls -la logs/ && echo "Total log size: $(du -sh logs/ | cut -f1)"
 docker logs mariadb
 
 # Verify configuration
-./health_check.sh
+./scripts/
 
 # Check disk space
 df -h
@@ -738,7 +738,7 @@ docker compose -f docker-compose.cluster.yml up -d --force-recreate node2 node3
 # 3. Fresh cluster with no data yet? Clean re-init is the fastest fix:
 docker compose -f docker-compose.cluster.yml down
 rm -rf cluster_data
-./cluster.sh init
+./scripts/ init
 ```
 
 #### Restore Problems
@@ -747,13 +747,13 @@ rm -rf cluster_data
 tail -f logs/restore.log
 
 # Test backup integrity WITHOUT writing plaintext to disk
-./verify_backup.sh --database mydb
+./scripts/ --database mydb
 
 # Check available space
 df -h mariadb_data/
 
 # Run restore with verbose output
-./restore.sh --verbose
+./scripts/ --verbose
 ```
 
 ### Error Codes (backup.sh)
@@ -761,7 +761,7 @@ df -h mariadb_data/
 | Code | Description | Solution |
 |------|-------------|----------|
 | 1 | `.env` missing or backups failed | Check `.env` and `logs/backup.log` |
-| 2 | Unknown command line option | See `./backup.sh --help` |
+| 2 | Unknown command line option | See `./scripts/ --help` |
 | 3 | Directory creation failed | Check permissions and disk space |
 | 4 | Encryption key generation failed | Check OpenSSL installation |
 | 5 | Cannot connect to MariaDB container | Check container status and credentials |
@@ -773,13 +773,13 @@ scripts exit `1` on failure with details in their log file under `logs/`.
 ### Getting Support
 
 1. **Check logs** in `./logs/` directory
-2. **Run health check**: `./health_check.sh --test-backup`
+2. **Run health check**: `./scripts/ --test-backup`
 3. **Review configuration**: `make config` or check `.env` file
-4. **Verify backups**: `./verify_backup.sh --latest`
+4. **Verify backups**: `./scripts/ --latest`
 5. **Check GitHub issues** for similar problems
 6. **Create new issue** with detailed information including:
    - Log files from `./logs/`
-   - Output of `./health_check.sh`
+   - Output of `./scripts/`
    - Your `.env` configuration (without passwords)
    - Steps to reproduce the issue
 
@@ -820,7 +820,7 @@ make health
 
 # Check specific components
 docker logs mariadb                    # MariaDB logs
-./cluster.sh status                    # Cluster health (cluster mode)
+./scripts/ status                    # Cluster health (cluster mode)
 ```
 
 ### Backup Verification
@@ -842,8 +842,8 @@ make list-backups
 `.env` (no tracked files touched) - or let `tune.sh` measure and suggest:
 
 ```bash
-./tune.sh                    # show recommendations from host RAM/CPU/disk + live metrics
-./tune.sh --ram 15 --apply   # budget 15 GB to the DB, write to .env, rolling restart
+./scripts/                    # show recommendations from host RAM/CPU/disk + live metrics
+./scripts/ --ram 15 --apply   # budget 15 GB to the DB, write to .env, rolling restart
 ```
 
 The relevant `.env` knobs (**per node** - in cluster mode all 3 share the host):
@@ -868,25 +868,25 @@ performance because backups + cluster replication already protect the data.
 ### Backup Scheduling
 
 Set up automated backups with cron (the self-healing cron job is installed
-automatically by `./install.sh --cluster`):
+automatically by `./scripts/ --cluster`):
 
 ```bash
 # Edit crontab
 crontab -e
 
 # Recommended schedule
-0 2 * * *      cd /path/to/mariadb-backup-system && ./backup.sh --full
-0 6,12,18 * * * cd /path/to/mariadb-backup-system && ./backup.sh --incremental
-30 2 * * *     cd /path/to/mariadb-backup-system && ./verify_backup.sh --latest
-0 3 * * *      cd /path/to/mariadb-backup-system && ./offsite_sync.sh --verify
-0 5 * * 0      cd /path/to/mariadb-backup-system && ./restore_test.sh
-0 4 * * 0      cd /path/to/mariadb-backup-system && ./cleanup_backups.sh && ./cleanup_binlogs.sh && ./log_cleanup.sh
+0 2 * * *      cd /path/to/mariadb-backup-system && ./scripts/ --full
+0 6,12,18 * * * cd /path/to/mariadb-backup-system && ./scripts/ --incremental
+30 2 * * *     cd /path/to/mariadb-backup-system && ./scripts/ --latest
+0 3 * * *      cd /path/to/mariadb-backup-system && ./scripts/ --verify
+0 5 * * 0      cd /path/to/mariadb-backup-system && ./scripts/
+0 4 * * 0      cd /path/to/mariadb-backup-system && ./scripts/ && ./scripts/ && ./scripts/
 ```
 
 Tip: set `OFFSITE_AUTO=yes` in `.env` instead of the offsite cron line to
 replicate immediately after every backup.
 
-On Windows, run the scripts via WSL (`wsl -e bash -c "cd /path && ./backup.sh --full"`)
+On Windows, run the scripts via WSL (`wsl -e bash -c "cd /path && ./scripts/ --full"`)
 in the Task Scheduler - the shell scripts require a POSIX environment.
 
 ## Contributing

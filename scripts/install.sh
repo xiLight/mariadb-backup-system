@@ -182,15 +182,15 @@ check_prerequisites() {
         log_error "Docker is not installed. Please install Docker first."
         
         # Check if install-docker.sh exists
-        if [ ! -f "./install-docker.sh" ]; then
+        if [ ! -f "./scripts/install-docker.sh" ]; then
             log_error "install-docker.sh script not found. Please install Docker manually."
             echo "Visit: https://docs.docker.com/get-docker/"
             exit 1
         fi
         
         # Execute the Docker installation script
-        chmod +x ./install-docker.sh
-        ./install-docker.sh
+        chmod +x ./scripts/install-docker.sh
+        ./scripts/install-docker.sh
         
         # Verify Docker was installed successfully
         if ! command -v docker &> /dev/null; then
@@ -445,9 +445,9 @@ start_cluster_services() {
 
     if [[ -f "./cluster_data/node1/grastate.dat" ]]; then
         log_info "Existing cluster data found - starting cluster"
-        ./cluster.sh start
+        ./scripts/cluster.sh start
     else
-        ./cluster.sh init
+        ./scripts/cluster.sh init
     fi
 }
 
@@ -456,11 +456,11 @@ setup_heal_cron() {
     log_info "Setting up self-healing cron job..."
 
     if ! command -v crontab &> /dev/null; then
-        log_warning "crontab not available - install cron or run './heal.sh --daemon' instead"
+        log_warning "crontab not available - install cron or run './scripts/heal.sh --daemon' instead"
         return 0
     fi
 
-    local cron_line="* * * * * cd $(pwd) && ./heal.sh >/dev/null 2>&1"
+    local cron_line="* * * * * cd $(pwd) && ./scripts/heal.sh >/dev/null 2>&1"
     if crontab -l 2>/dev/null | grep -qF "/heal.sh"; then
         log_info "Self-healing cron job already installed"
     else
@@ -474,7 +474,7 @@ setup_heal_cron() {
 test_backup() {
     log_info "Running initial backup test..."
     
-    if ./backup.sh --full --include-empty; then
+    if ./scripts/backup.sh --full --include-empty; then
         log_success "Initial backup test completed successfully"
     else
         log_warning "Initial backup test failed. Check logs/backup.log for details"
@@ -496,9 +496,9 @@ show_completion_info() {
         echo -e "   ${YELLOW}Self-healing cron${NC}                # Checks the cluster every minute"
         echo
         echo -e "${BLUE}Cluster Commands:${NC}"
-        echo -e "   ${YELLOW}./cluster.sh status${NC}               # Cluster health"
-        echo -e "   ${YELLOW}./update.sh${NC}                       # Rolling update (zero downtime)"
-        echo -e "   ${YELLOW}./heal.sh${NC}                         # Manual healing check"
+        echo -e "   ${YELLOW}./scripts/cluster.sh status${NC}               # Cluster health"
+        echo -e "   ${YELLOW}./scripts/update.sh${NC}                       # Rolling update (zero downtime)"
+        echo -e "   ${YELLOW}./scripts/heal.sh${NC}                         # Manual healing check"
         echo
     fi
     if command -v portolan &> /dev/null; then
@@ -510,15 +510,15 @@ show_completion_info() {
     echo -e "${BLUE}Next Steps:${NC}"
     echo "1. Review and customize your .env file"
     echo "2. Start using the backup system:"
-    echo -e "   ${YELLOW}./backup.sh --full --include-empty${NC}  # Full backup"
-    echo -e "   ${YELLOW}./backup.sh --incremental${NC}            # Incremental backup"
+    echo -e "   ${YELLOW}./scripts/backup.sh --full --include-empty${NC}  # Full backup"
+    echo -e "   ${YELLOW}./scripts/backup.sh --incremental${NC}            # Incremental backup"
     echo
     echo -e "${BLUE}Useful Commands:${NC}"
     echo -e "   ${YELLOW}docker logs mariadb${NC}               # View MariaDB logs"
-    echo -e "   ${YELLOW}./cleanup_backups.sh${NC}              # Clean old backups"
-    echo -e "   ${YELLOW}./restore.sh${NC}                      # Restore from backup"
-    echo -e "   ${YELLOW}./health_check.sh${NC}                 # System health check"
-    echo -e "   ${YELLOW}./log_cleanup.sh${NC}                  # Clean log files"
+    echo -e "   ${YELLOW}./scripts/cleanup_backups.sh${NC}              # Clean old backups"
+    echo -e "   ${YELLOW}./scripts/restore.sh${NC}                      # Restore from backup"
+    echo -e "   ${YELLOW}./scripts/health_check.sh${NC}                 # System health check"
+    echo -e "   ${YELLOW}./scripts/log_cleanup.sh${NC}                  # Clean log files"
     echo
     echo -e "${BLUE}Configuration Files:${NC}"
     echo -e "   ${YELLOW}.env${NC}                             # Environment variables"

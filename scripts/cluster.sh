@@ -1,5 +1,5 @@
 #!/bin/bash
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 set -o pipefail
 
@@ -25,7 +25,7 @@ usage() {
   echo "  drill           Controlled failover test: stops node1, verifies the"
   echo "                  cluster keeps serving, brings node1 back"
   echo ""
-  echo "Rolling updates: ./update.sh | Self-healing: ./heal.sh"
+  echo "Rolling updates: ./scripts/update.sh | Self-healing: ./scripts/heal.sh"
   exit 0
 }
 
@@ -61,7 +61,7 @@ check_subnet_conflict() {
 cmd_init() {
   if [[ -f "./cluster_data/node1/grastate.dat" ]]; then
     log_error "Cluster already initialized (cluster_data/node1/grastate.dat exists)."
-    log_info "Use './cluster.sh start' to start it, or './heal.sh' to recover a broken cluster."
+    log_info "Use './scripts/cluster.sh start' to start it, or './scripts/heal.sh' to recover a broken cluster."
     exit 1
   fi
 
@@ -104,7 +104,7 @@ cmd_init() {
 
 cmd_start() {
   if [[ ! -f "./cluster_data/node1/grastate.dat" && ! -f "./cluster_data/node2/grastate.dat" && ! -f "./cluster_data/node3/grastate.dat" ]]; then
-    log_error "Cluster not initialized yet. Run: ./cluster.sh init"
+    log_error "Cluster not initialized yet. Run: ./scripts/cluster.sh init"
     exit 1
   fi
 
@@ -118,14 +118,14 @@ cmd_start() {
   # All nodes are down: this is a full-cluster cold start, which needs a
   # bootstrap node. heal.sh knows how to pick the node with the newest data.
   log_info "All nodes are down - delegating cold start to heal.sh (safe bootstrap)"
-  ./heal.sh --recover
+  ./scripts/heal.sh --recover
 }
 
 cmd_stop() {
   log_info "Stopping cluster..."
   compose_cluster stop haproxy
   compose_cluster stop node3 node2 node1
-  log_success "Cluster stopped. Restart with: ./cluster.sh start"
+  log_success "Cluster stopped. Restart with: ./scripts/cluster.sh start"
 }
 
 # Full teardown + clean re-initialization with a Portolan-managed subnet.
@@ -146,7 +146,7 @@ cmd_reinit() {
   if command -v portolan &>/dev/null; then
     portolan sync &>/dev/null || true
     local new_subnet
-    new_subnet=$(portolan next-subnet 2>/dev/null | tail -1 | sed 's/\x1b\[[0-9;]*m//g' | tr -d '[:space:]')
+    new_subnet=$(portolan next-subnet 3 24 | tail -1 | sed 's/\x1b\[[0-9;]*m//g' | tr -d '[:space:]')
     if [[ "$new_subnet" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]]; then
       set_env_value GALERA_SUBNET "$new_subnet"
       GALERA_SUBNET="$new_subnet"
@@ -260,9 +260,9 @@ cmd_status() {
   if [[ "$healthy" -eq 3 ]]; then
     log_success "Cluster is fully healthy (3/3 nodes synced)"
   elif [[ "$healthy" -gt 0 ]]; then
-    log_warning "Cluster is degraded ($healthy/3 nodes synced) - consider running ./heal.sh"
+    log_warning "Cluster is degraded ($healthy/3 nodes synced) - consider running ./scripts/heal.sh"
   else
-    log_error "Cluster is down (0/3 nodes synced) - run ./heal.sh to recover"
+    log_error "Cluster is down (0/3 nodes synced) - run ./scripts/heal.sh to recover"
   fi
 
   if container_running "$(node_container haproxy)"; then
